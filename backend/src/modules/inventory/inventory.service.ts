@@ -18,6 +18,7 @@ export class InventoryService {
     private usersRepository: Repository<User>,
   ) {}
 
+  // Create a new inventory item
   async createItem(
     createItemDto: CreateInventoryItemDto,
     workspaceId: string,
@@ -32,18 +33,22 @@ export class InventoryService {
     }
 
     const user = await this.usersRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
 
     const item = this.itemsRepository.create({
       ...createItemDto,
-      workspace,
+      workspace: workspace,
       createdBy: user,
     });
 
-    return await this.itemsRepository.save(item);
+    return this.itemsRepository.save(item);
   }
 
+  // Get paginated inventory items for a workspace
   async getItems(workspaceId: string, skip = 0, take = 20) {
-    return await this.itemsRepository.find({
+    return this.itemsRepository.find({
       where: { workspace: { id: workspaceId } },
       skip,
       take,
@@ -51,6 +56,7 @@ export class InventoryService {
     });
   }
 
+  // Get a single inventory item by ID
   async getItem(itemId: string) {
     const item = await this.itemsRepository.findOne({
       where: { id: itemId },
@@ -64,25 +70,29 @@ export class InventoryService {
     return item;
   }
 
+  // Update an inventory item
   async updateItem(itemId: string, updateItemDto: UpdateInventoryItemDto) {
     const item = await this.getItem(itemId);
     Object.assign(item, updateItemDto);
-    return await this.itemsRepository.save(item);
+    return this.itemsRepository.save(item);
   }
 
+  // Delete an inventory item
   async deleteItem(itemId: string) {
     const item = await this.getItem(itemId);
     await this.itemsRepository.remove(item);
     return { message: 'Item deleted successfully' };
   }
 
+  // Search items in a workspace by name or SKU
   async searchItems(workspaceId: string, searchTerm: string) {
-    return await this.itemsRepository
+    return this.itemsRepository
       .createQueryBuilder('item')
       .where('item.workspace_id = :workspaceId', { workspaceId })
-      .andWhere('(item.name ILIKE :searchTerm OR item.sku ILIKE :searchTerm)', {
-        searchTerm: `%${searchTerm}%`,
-      })
+      .andWhere(
+        '(item.name ILIKE :searchTerm OR item.sku ILIKE :searchTerm)',
+        { searchTerm: `%${searchTerm}%` },
+      )
       .getMany();
   }
 }
