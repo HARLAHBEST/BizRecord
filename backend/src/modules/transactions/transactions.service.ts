@@ -35,6 +35,10 @@ export class TransactionsService {
 
     const user = await this.usersRepository.findOne({ where: { id: userId } });
 
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
     const transaction = this.transactionsRepository.create({
       ...createTransactionDto,
       workspace,

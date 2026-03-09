@@ -49,6 +49,10 @@ export class WorkspaceService {
       relations: ['workspaces'],
     });
 
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
     return user.workspaces;
   }
 
