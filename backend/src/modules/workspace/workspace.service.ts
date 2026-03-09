@@ -53,7 +53,7 @@ export class WorkspaceService {
       throw new NotFoundException('User not found');
     }
 
-    return user.workspaces;
+    return user.workspaces || [];
   }
 
   async getWorkspace(workspaceId: string) {

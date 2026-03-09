@@ -40,7 +40,13 @@ export class TransactionsService {
     }
 
     const transaction = this.transactionsRepository.create({
-      ...createTransactionDto,
+      type: createTransactionDto.type,
+      amount: createTransactionDto.amount,
+      description: createTransactionDto.description,
+      date: createTransactionDto.date,
+      category: createTransactionDto.category,
+      status: createTransactionDto.status,
+      itemId: createTransactionDto.itemId,
       workspace,
       createdBy: user,
     });
