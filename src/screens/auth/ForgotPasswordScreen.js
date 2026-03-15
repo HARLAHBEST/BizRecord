@@ -1,16 +1,30 @@
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  useWindowDimensions,
+} from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 
 export default function ForgotPasswordScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
+  const { width } = useWindowDimensions();
+  const isCompact = width < 380;
+  const cardWidth = Math.min(width - (isCompact ? 24 : 36), 460);
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      <Text style={[styles.title, { color: theme.colors.textPrimary }]}>Reset Password</Text>
-      <View style={[styles.card, { backgroundColor: theme.colors.card }]}>
+      <Text style={[styles.title, { color: theme.colors.textPrimary, fontSize: isCompact ? 20 : 22 }]}>Reset Password</Text>
+      <View style={[styles.card, { backgroundColor: theme.colors.card, width: cardWidth }]}> 
         <Text style={{ color: theme.colors.textSecondary }}>Enter your account email</Text>
-        <TextInput style={[styles.input, { color: theme.colors.textPrimary }]} placeholder="you@store.com" placeholderTextColor={theme.colors.textSecondary} />
+        <TextInput
+          style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
+          placeholder="you@store.com"
+          placeholderTextColor={theme.colors.textSecondary}
+        />
         <TouchableOpacity style={[styles.button, { backgroundColor: theme.colors.primary }]} onPress={() => navigation.goBack()}>
           <Text style={styles.buttonText}>Send reset link</Text>
         </TouchableOpacity>
@@ -21,9 +35,15 @@ export default function ForgotPasswordScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, alignItems: 'center', padding: 20, justifyContent: 'center' },
-  title: { fontSize: 22, fontWeight: '700', marginBottom: 12 },
-  card: { width: '100%', padding: 16, borderRadius: 12 },
-  input: { marginTop: 10, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8 },
+  title: { fontWeight: '700', marginBottom: 12 },
+  card: { padding: 16, borderRadius: 12 },
+  input: {
+    marginTop: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
   button: { marginTop: 12, padding: 12, borderRadius: 10, alignItems: 'center' },
   buttonText: { color: '#fff', fontWeight: '700' }
 });

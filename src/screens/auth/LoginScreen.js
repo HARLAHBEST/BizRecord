@@ -1,5 +1,15 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  useWindowDimensions,
+} from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../theme/ThemeContext';
 
@@ -7,10 +17,13 @@ export default function LoginScreen({ navigation }) {
   const { login } = useAuth();
   const themeContext = useTheme();
   const theme = themeContext.theme;
+  const { width } = useWindowDimensions();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const isCompact = width < 380;
+  const formWidth = Math.min(width - (isCompact ? 24 : 36), 460);
 
   const handleLogin = async () => {
     setError(null);
@@ -25,12 +38,15 @@ export default function LoginScreen({ navigation }) {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      <Text style={[styles.logo, { color: theme.colors.textPrimary }]}>Booker</Text>
-      <View style={[styles.form, { backgroundColor: theme.colors.card }]}> 
+    <KeyboardAvoidingView
+      style={[styles.container, { backgroundColor: theme.colors.background }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <Text style={[styles.logo, { color: theme.colors.textPrimary, fontSize: isCompact ? 30 : 36 }]}>Booker</Text>
+      <View style={[styles.form, { backgroundColor: theme.colors.card, width: formWidth }]}> 
         <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Email</Text>
         <TextInput
-          style={[styles.input, { color: theme.colors.textPrimary }]}
+          style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
           value={email}
           onChangeText={setEmail}
           placeholder="you@store.com"
@@ -40,7 +56,7 @@ export default function LoginScreen({ navigation }) {
         />
         <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Password</Text>
         <TextInput
-          style={[styles.input, { color: theme.colors.textPrimary }]}
+          style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
           value={password}
           onChangeText={setPassword}
           placeholder="••••••"
@@ -69,16 +85,23 @@ export default function LoginScreen({ navigation }) {
           )}
         </TouchableOpacity>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
-  logo: { fontSize: 36, fontWeight: '700', marginBottom: 24 },
-  form: { width: '100%', borderRadius: 14, padding: 16 },
+  logo: { fontWeight: '700', marginBottom: 24 },
+  form: { borderRadius: 14, padding: 16 },
   label: { fontSize: 12, marginTop: 8 },
-  input: { paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, marginTop: 6, backgroundColor: 'transparent' },
+  input: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginTop: 6,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+  },
   button: { padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 6 },
   buttonText: { color: '#fff', fontWeight: '700' }
 });

@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { cacheTransactions, getCachedTransactions } from '../storage/offlineStore';
+import { cacheInventory, getCachedInventory } from '../storage/offlineStore';
 import { Card, Title, Subtle } from '../components/UI';
 import { useAuth } from '../context/AuthContext';
+import { api } from '../api/client';
 import { MaterialIcons } from '@expo/vector-icons';
 
 export default function DashboardScreen({ navigation }) {
@@ -12,12 +14,17 @@ export default function DashboardScreen({ navigation }) {
   const theme = themeContext.theme;
   const { user } = useAuth();
   const workspace = useWorkspace();
-  const { syncInfo } = workspace;
+  const { width } = useWindowDimensions();
+  const compact = width < 390;
+  const contentWidth = Math.min(width - (compact ? 20 : 32), 860);
+  const titleSize = compact ? 16 : 18;
+  const subtitleSize = compact ? 11 : 13;
 
   const [recentSales, setRecentSales] = React.useState([]);
   const [recentExpenses, setRecentExpenses] = React.useState([]);
   const [loadingActivity, setLoadingActivity] = React.useState(false);
   const [activityError, setActivityError] = React.useState(null);
+  const [inventoryItems, setInventoryItems] = React.useState([]);
 
   React.useEffect(() => {
     const loadActivity = async () => {
@@ -57,7 +64,34 @@ export default function DashboardScreen({ navigation }) {
 
     loadActivity();
   }, [workspace.currentWorkspaceId]);
+
+  React.useEffect(() => {
+    const loadInventory = async () => {
+      if (!workspace.currentWorkspaceId) {
+        setInventoryItems([]);
+        return;
+      }
+
+      try {
+        const data = await api.get(`/workspaces/${workspace.currentWorkspaceId}/inventory`);
+        const list = Array.isArray(data) ? data : [];
+        setInventoryItems(list);
+        cacheInventory(workspace.currentWorkspaceId, list).catch(() => null);
+      } catch (err) {
+        const cached = await getCachedInventory(workspace.currentWorkspaceId);
+        setInventoryItems(Array.isArray(cached) ? cached : []);
+      }
+    };
+
+    loadInventory();
+  }, [workspace.currentWorkspaceId]);
+
   const currentWorkspace = workspace.workspaces.find((w) => w.id === workspace.currentWorkspaceId);
+  const inventoryValue = inventoryItems.reduce((sum, item) => {
+    const qty = Number(item.quantity) || 0;
+    const cost = Number(item.costPrice) || 0;
+    return sum + qty * cost;
+  }, 0);
 
   const handleAddItem = () => {
     navigation.navigate('AddItem');
@@ -72,12 +106,16 @@ export default function DashboardScreen({ navigation }) {
   };
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: theme.colors.background }]} contentContainerStyle={{ padding: 16 }}>
-      {/* Header with Workspace Switcher */}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: theme.colors.textPrimary, fontSize: 18, fontWeight: '700' }}>Good morning</Text>
-          <Subtle>{user ? `${user.name} • ${user.role}` : 'Guest'}</Subtle>
+    <ScrollView
+      style={[styles.container, { backgroundColor: theme.colors.background }]}
+      contentContainerStyle={{ alignItems: 'center', paddingHorizontal: compact ? 10 : 16, paddingVertical: 12 }}
+    >
+      <View style={[styles.contentWrap, { width: contentWidth }]}> 
+      {/* Header row */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <View style={{ flex: 1, paddingRight: 10 }}>
+          <Text style={{ color: theme.colors.textPrimary, fontSize: titleSize, fontWeight: '700' }}>Good morning</Text>
+          <Subtle>{user ? user.name : 'Guest'}</Subtle>
         </View>
         <TouchableOpacity
           style={[styles.workspaceBadge, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}
@@ -86,31 +124,70 @@ export default function DashboardScreen({ navigation }) {
           <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>
             {currentWorkspace?.name || 'Workspace'}
           </Text>
-          <Subtle style={{ marginTop: 4 }}>
-            {syncInfo?.lastSyncedAt
-              ? `Last synced ${new Date(syncInfo.lastSyncedAt).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}`
-              : 'Not synced yet'}
-          </Subtle>
         </TouchableOpacity>
       </View>
 
+      {/* Inventory Stats Card */}
+      <Card style={{ padding: compact ? 12 : 14 }}>
+        <View style={{ flexDirection: compact ? 'column' : 'row', justifyContent: 'space-between' }}>
+          <View style={{ flex: 1 }}>
+            <Title>Total inventory value</Title>
+            <Text style={{ color: theme.colors.textPrimary, fontSize: compact ? 18 : 20, fontWeight: '700', marginTop: 6 }}>
+              ₦{inventoryValue.toLocaleString()}
+            </Text>
+            <Subtle>{inventoryItems.length} item(s) in stock</Subtle>
+          </View>
+          <View style={{ justifyContent: 'center', marginTop: compact ? 8 : 0 }}>
+            <Text style={{ color: theme.colors.primary, fontWeight: '700' }}>
+              {currentWorkspace?.name ? currentWorkspace.name : 'Workspace'}
+            </Text>
+          </View>
+        </View>
+      </Card>
+
+      {/* Quick Actions */}
+      <View style={{ marginTop: 16 }}>
+        <Text style={{ color: theme.colors.textSecondary, marginBottom: 8 }}>Quick actions</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8 }}>
+          <TouchableOpacity 
+            style={[styles.action, { backgroundColor: theme.colors.card }]}
+            onPress={handleAddItem}
+          >
+            <MaterialIcons name="add-circle-outline" size={20} color={theme.colors.primary} />
+            <Text style={{ color: theme.colors.textPrimary, fontSize: compact ? 11 : 12, marginTop: 6 }}>Add item</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.action, { backgroundColor: theme.colors.card }]}
+            onPress={handleRecordSale}
+          >
+            <MaterialIcons name="shopping-cart" size={20} color={theme.colors.success} />
+            <Text style={{ color: theme.colors.textPrimary, fontSize: compact ? 11 : 12, marginTop: 6 }}>Record sale</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.action, { backgroundColor: theme.colors.card }]}
+            onPress={handleRecordExpense}
+          >
+            <MaterialIcons name="money-off" size={20} color={theme.colors.warning} />
+            <Text style={{ color: theme.colors.textPrimary, fontSize: compact ? 11 : 12, marginTop: 6 }}>Expense</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Recent Activity */}
       {activityError ? (
-        <Subtle style={{ color: theme.colors.error }}>{activityError}</Subtle>
+        <Subtle style={{ color: theme.colors.error, fontSize: subtitleSize, marginTop: 16 }}>{activityError}</Subtle>
       ) : null}
 
       {loadingActivity ? (
-        <Subtle style={{ marginTop: 8 }}>Loading recent activity…</Subtle>
+        <Subtle style={{ marginTop: 16, fontSize: subtitleSize }}>Loading recent activity…</Subtle>
       ) : (
         <>
           {recentSales.length === 0 && recentExpenses.length === 0 ? (
-            <Subtle style={{ marginTop: 8 }}>No recent activity</Subtle>
+            <Subtle style={{ marginTop: 16, fontSize: subtitleSize }}>No recent activity</Subtle>
           ) : (
             <>
               {recentSales.length > 0 && (
-                <Card style={{ marginTop: 8 }}>
+                <Card style={{ marginTop: 16 }}>
                   <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Recent sales</Text>
                   {recentSales.map((tx) => (
                     <View key={tx.id} style={{ marginTop: 10 }}>
@@ -140,77 +217,27 @@ export default function DashboardScreen({ navigation }) {
           )}
         </>
       )}
-
-      {/* Inventory Stats Card */}
-      <Card style={{ padding: 14 }}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          <View>
-            <Title>Total inventory value</Title>
-            <Text style={{ color: theme.colors.textPrimary, fontSize: 20, fontWeight: '700', marginTop: 6 }}>$12,450</Text>
-            <Subtle>Across {workspace.workspaces.length} workspace(s)</Subtle>
-          </View>
-          <View style={{ justifyContent: 'center' }}>
-            <Text style={{ color: theme.colors.primary, fontWeight: '700' }}>
-              {currentWorkspace?.name ? currentWorkspace.name : 'Workspace'}
-            </Text>
-          </View>
-        </View>
-      </Card>
-
-      {/* Quick Actions */}
-      <View style={{ marginTop: 16 }}>
-        <Text style={{ color: theme.colors.textSecondary, marginBottom: 8 }}>Quick actions</Text>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
-          <TouchableOpacity 
-            style={[styles.action, { backgroundColor: theme.colors.card }]}
-            onPress={handleAddItem}
-          >
-            <MaterialIcons name="add-circle-outline" size={20} color={theme.colors.primary} />
-            <Text style={{ color: theme.colors.textPrimary, fontSize: 12, marginTop: 6 }}>Add item</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.action, { backgroundColor: theme.colors.card }]}
-            onPress={handleRecordSale}
-          >
-            <MaterialIcons name="shopping-cart" size={20} color={theme.colors.success} />
-            <Text style={{ color: theme.colors.textPrimary, fontSize: 12, marginTop: 6 }}>Record sale</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.action, { backgroundColor: theme.colors.card }]}
-            onPress={handleRecordExpense}
-          >
-            <MaterialIcons name="money-off" size={20} color={theme.colors.warning} />
-            <Text style={{ color: theme.colors.textPrimary, fontSize: 12, marginTop: 6 }}>Expense</Text>
-          </TouchableOpacity>
-        </View>
       </View>
-
-      {/* Recent Activity */}
-      <Text style={{ color: theme.colors.textSecondary, marginTop: 14 }}>Recent activity</Text>
-      <Card style={{ marginTop: 8 }}>
-        <View>
-          <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Sale recorded</Text>
-          <Subtle>John • Outlet • $120 • 2h ago</Subtle>
-        </View>
-      </Card>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  contentWrap: { maxWidth: 860 },
   workspaceBadge: { 
-    padding: 8, 
+    flexShrink: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
     borderRadius: 8, 
-    flexDirection: 'row', 
-    alignItems: 'center',
-    borderWidth: 1,
-    maxWidth: 120
+    alignItems: 'flex-start',
+    borderWidth: 1
   },
   action: { 
+    minWidth: '31.5%',
     padding: 12, 
     borderRadius: 10, 
-    flex: 1, 
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center'
   }

@@ -7,7 +7,7 @@ import { api } from '../../api/client';
 export default function EditItemScreen({ navigation, route }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
-  const { currentWorkspaceId, syncInfo } = useWorkspace();
+  const { currentWorkspaceId, queueAction } = useWorkspace();
   const item = route?.params?.item;
 
   const [name, setName] = useState(item?.name || '');
@@ -70,13 +70,13 @@ export default function EditItemScreen({ navigation, route }) {
 
       navigation.goBack();
     } catch (err) {
-      if (syncInfo?.queueAction) {
+      if (queueAction) {
         const path = item?.id
           ? `/workspaces/${currentWorkspaceId}/inventory/${item.id}`
           : `/workspaces/${currentWorkspaceId}/inventory`;
         const method = item?.id ? 'put' : 'post';
 
-        await syncInfo.queueAction({
+        await queueAction({
           method,
           path,
           body: payload,

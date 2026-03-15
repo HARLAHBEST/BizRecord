@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,8 +10,7 @@ import {
   Alert,
   Platform,
   StatusBar,
-  FlatList,
-  Image
+  FlatList
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -23,7 +22,7 @@ import { cacheInventory, getCachedInventory } from '../storage/offlineStore';
 const HomeScreen = function({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
-  const { currentWorkspaceId, syncInfo } = useWorkspace();
+  const { currentWorkspaceId, queueAction } = useWorkspace();
 
   const [items, setItems] = useState([]);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -70,27 +69,26 @@ const HomeScreen = function({ navigation }) {
 
   const filteredItems = useMemo(function() {
     return items.filter(function(item) {
-      const matchesWorkspace = item.workspaceId === currentWorkspaceId;
+      const itemName = (item.name || '').toLowerCase();
+      const itemCategory = (item.category || '').toLowerCase();
       const matchesSearch =
-        item.name.toLowerCase().includes(searchText.toLowerCase()) ||
-        item.category.toLowerCase().includes(searchText.toLowerCase());
+        itemName.includes(searchText.toLowerCase()) ||
+        itemCategory.includes(searchText.toLowerCase());
       const matchesCategory =
         filterCategory === 'All' || item.category === filterCategory;
-      return matchesWorkspace && matchesSearch && matchesCategory;
+      return matchesSearch && matchesCategory;
     });
-  }, [items, searchText, filterCategory, workspace.currentWorkspaceId]);
+  }, [items, searchText, filterCategory]);
 
   const categories = useMemo(function() {
     const categorySet = {};
-    items
-      .filter(function(item) {
-        return item.workspaceId === currentWorkspaceId;
-      })
-      .forEach(function(item) {
+    items.forEach(function(item) {
+      if (item.category) {
         categorySet[item.category] = true;
-      });
+      }
+    });
     return ['All'].concat(Object.keys(categorySet));
-  }, [items, workspace.currentWorkspaceId]);
+  }, [items]);
 
   const handleUpdateQuantity = async function(itemId, qty) {
     if (qty < 0) return;
@@ -117,7 +115,7 @@ const HomeScreen = function({ navigation }) {
       var item = items.find(function(i) {
         return i.id === itemId;
       });
-      if (item && qty < item.minStock) {
+      if (item && qty < Number(item.reorderLevel || 0)) {
         Platform.OS === 'web'
           ? window.alert(
               'Low stock alert: ' +
@@ -130,8 +128,8 @@ const HomeScreen = function({ navigation }) {
             );
       }
     } catch (err) {
-      if (syncInfo?.queueAction) {
-        await syncInfo.queueAction({
+      if (queueAction) {
+        await queueAction({
           method: 'put',
           path: `/workspaces/${currentWorkspaceId}/inventory/${itemId}`,
           body: { quantity: qty },
@@ -164,8 +162,8 @@ const HomeScreen = function({ navigation }) {
               return next;
             });
           } catch (err) {
-            if (syncInfo?.queueAction) {
-              await syncInfo.queueAction({
+            if (queueAction) {
+              await queueAction({
                 method: 'delete',
                 path: `/workspaces/${currentWorkspaceId}/inventory/${itemId}`,
               });
@@ -189,7 +187,8 @@ const HomeScreen = function({ navigation }) {
 
   const handleOpenUpdateModal = function(item) {
     setSelectedItem(item);
-    setNewQuantity(item.quantity.toString());
+    const quantityText = item?.quantity != null ? String(item.quantity) : '0';
+    setNewQuantity(quantityText);
     setShowUpdateModal(true);
   };
 
@@ -201,6 +200,17 @@ const HomeScreen = function({ navigation }) {
       <View style={styles.header}>
         <View style={styles.headerContent}>
           <View style={styles.headerText}>
+            <TouchableOpacity
+              onPress={() => {
+                if (navigation.canGoBack()) {
+                  navigation.goBack();
+                }
+              }}
+              style={[styles.backButton, { borderColor: theme.colors.border, opacity: navigation.canGoBack() ? 1 : 0.35 }]}
+              disabled={!navigation.canGoBack()}
+            >
+              <MaterialIcons name="arrow-back" size={20} color={theme.colors.textPrimary} />
+            </TouchableOpacity>
             <Text
               style={[styles.headerTitle, { color: theme.colors.textPrimary }]}
             >
@@ -228,10 +238,9 @@ const HomeScreen = function({ navigation }) {
               <MaterialIcons name="add" size={20} color={theme.colors.primary} />
               <Text style={[styles.addButtonText, { color: theme.colors.primary }]}>Add</Text>
             </TouchableOpacity>
-            <Image
-              source={{ uri: 'IMAGE:warehouse-storage-boxes' }}
-              style={styles.headerImage}
-            />
+            <View style={[styles.headerIconBox, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+              <MaterialIcons name="inventory" size={28} color={theme.colors.primary} />
+            </View>
           </View>
         </View>
       </View>
@@ -261,7 +270,6 @@ const HomeScreen = function({ navigation }) {
         </View>
         <ScrollView
           horizontal={true}
-          style={{ flexGrow: 'initial' }}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.categoryFilters}
         >
@@ -303,12 +311,15 @@ const HomeScreen = function({ navigation }) {
 
       <FlatList
         data={filteredItems}
-        keyExtractor={function(item) {
-          return item.id;
+        keyExtractor={function(item, index) {
+          if (item?.id != null) {
+            return String(item.id);
+          }
+          return `inventory-item-${index}`;
         }}
         renderItem={function(itemData) {
           var item = itemData.item;
-          var isLowStock = item.quantity < item.minStock;
+          var isLowStock = Number(item.quantity) < Number(item.reorderLevel || 0);
 
           return (
             <TouchableOpacity
@@ -337,7 +348,7 @@ const HomeScreen = function({ navigation }) {
                         { color: theme.colors.textSecondary }
                       ]}
                     >
-                      {item.category} • {item.location}
+                      {item.category || 'Uncategorized'} • {item.location || 'No location'}
                     </Text>
                   </View>
                 </View>
@@ -393,7 +404,7 @@ const HomeScreen = function({ navigation }) {
                     }
                   ]}
                 >
-                  {item.quantity.toString()}
+                  {item.quantity != null ? String(item.quantity) : '0'}
                 </Text>
                 <Text
                   style={[
@@ -401,7 +412,7 @@ const HomeScreen = function({ navigation }) {
                     { color: theme.colors.textSecondary }
                   ]}
                 >
-                  Min: {item.minStock}
+                  Min: {item.reorderLevel || 0}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -413,6 +424,12 @@ const HomeScreen = function({ navigation }) {
             paddingBottom: Platform.OS === 'web' ? 90 : 100
           }
         ]}
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Text style={[styles.emptyTitle, { color: theme.colors.textPrimary }]}>No inventory items yet</Text>
+            <Text style={[styles.emptySubtitle, { color: theme.colors.textSecondary }]}>Tap Add to create your first item.</Text>
+          </View>
+        }
         showsVerticalScrollIndicator={false}
       />
 
@@ -573,6 +590,15 @@ const styles = StyleSheet.create({
   headerText: {
     flex: 1
   },
+  backButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
   headerTitle: {
     fontSize: 28,
     fontWeight: 'bold',
@@ -585,11 +611,14 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 12
   },
-  headerImage: {
-    width: 80,
-    height: 80,
+  headerIconBox: {
+    width: 52,
+    height: 52,
     borderRadius: 12,
-    marginLeft: 16
+    borderWidth: 1,
+    marginLeft: 16,
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   headerActions: {
     flexDirection: 'row',
@@ -646,6 +675,18 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingHorizontal: 20
+  },
+  emptyState: {
+    marginTop: 40,
+    alignItems: 'center'
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '600'
+  },
+  emptySubtitle: {
+    marginTop: 6,
+    fontSize: 13
   },
   itemCard: {
     padding: 16,

@@ -1,31 +1,100 @@
-import React from 'react';
-import { View, Text, FlatList, StyleSheet } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { Card, Subtle } from '../components/UI';
 import { useTheme } from '../theme/ThemeContext';
+import { useWorkspace } from '../context/WorkspaceContext';
+import { api } from '../api/client';
+import { MaterialIcons } from '@expo/vector-icons';
 
-const TX = [
-  { id: '1', type: 'Sale', amount: 120, branch: 'Outlet', date: 'Today' },
-  { id: '2', type: 'Expense', amount: 45, branch: 'Main Store', date: 'Today' }
-];
-
-export default function TransactionsScreen() {
+export default function TransactionsScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
+  const { currentWorkspaceId } = useWorkspace();
+  const { width } = useWindowDimensions();
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const contentWidth = Math.min(width - 24, 860);
+
+  useEffect(() => {
+    const loadTransactions = async () => {
+      if (!currentWorkspaceId) {
+        setTransactions([]);
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const data = await api.get(`/workspaces/${currentWorkspaceId}/transactions`, { take: 50 });
+        setTransactions(Array.isArray(data) ? data : []);
+      } catch (err) {
+        setTransactions([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadTransactions();
+  }, [currentWorkspaceId]);
+
+  const renderAmount = useMemo(() => {
+    return (item) => `₦${Number(item.totalAmount || 0).toLocaleString()}`;
+  }, []);
+
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      <FlatList data={TX} keyExtractor={(t) => t.id} contentContainerStyle={{ padding: 12 }} renderItem={({ item }) => (
+      <View style={[styles.pageHeader, { width: contentWidth }]}> 
+        <TouchableOpacity
+          onPress={() => {
+            if (navigation?.canGoBack && navigation.canGoBack()) {
+              navigation.goBack();
+            }
+          }}
+          style={[styles.backButton, { borderColor: theme.colors.border, opacity: navigation?.canGoBack && navigation.canGoBack() ? 1 : 0.35 }]}
+          disabled={!(navigation?.canGoBack && navigation.canGoBack())}
+        >
+          <MaterialIcons name="arrow-back" size={20} color={theme.colors.textPrimary} />
+        </TouchableOpacity>
+        <Text style={[styles.pageTitle, { color: theme.colors.textPrimary }]}>Transactions</Text>
+      </View>
+
+      {loading ? (
+        <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginTop: 24 }} />
+      ) : (
+        <FlatList data={transactions} keyExtractor={(t, index) => (t?.id != null ? String(t.id) : `tx-${index}`)} style={{ alignSelf: 'center', width: contentWidth }} contentContainerStyle={{ padding: 12, paddingBottom: 20 }} renderItem={({ item }) => (
         <Card>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
             <View>
-              <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>{item.type}</Text>
-              <Subtle>{item.branch} • {item.date}</Subtle>
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', textTransform: 'capitalize' }}>{item.type}</Text>
+              <Subtle>{item.customerName || item.category || 'N/A'} • {new Date(item.createdAt).toLocaleDateString()}</Subtle>
             </View>
-            <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>${item.amount}</Text>
+            <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>{renderAmount(item)}</Text>
           </View>
         </Card>
       )} ListEmptyComponent={() => <View style={{ padding: 20 }}><Subtle>No transactions</Subtle></View>} />
+      )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({ container: { flex: 1 } });
+const styles = StyleSheet.create({
+  container: { flex: 1, alignItems: 'center' },
+  pageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 10,
+    paddingHorizontal: 12,
+  },
+  backButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  pageTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+});

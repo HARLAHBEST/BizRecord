@@ -1,17 +1,21 @@
 import React from 'react';
 import { View, TouchableOpacity, StyleSheet, Text } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createNativeStackNavigator, useNavigation } from '@react-navigation/native-stack';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import DashboardScreen from '../screens/DashboardScreen';
 import InventoryScreen from '../screens/InventoryScreen';
 import AddItemScreen from '../screens/AddItemScreen';
 import EditItemScreen from '../screens/inventory/EditItemScreen';
 import SalesScreen from '../screens/SalesScreen';
 import DebtScreen from '../screens/DebtScreen';
+import SettingsScreen from '../screens/SettingsScreen';
 import RecordSaleScreen from '../screens/RecordSaleScreen';
 import RecordExpenseScreen from '../screens/RecordExpenseScreen';
 import RecordDebtScreen from '../screens/RecordDebtScreen';
 import BranchCreateScreen from '../screens/branch/BranchCreateScreen';
+import BranchListScreen from '../screens/branch/BranchListScreen';
+import WorkspaceSetupScreen from '../screens/workspace/WorkspaceSetupScreen';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useTheme } from '../theme/ThemeContext';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -22,8 +26,14 @@ const Stack = createNativeStackNavigator();
 function TabNavigator() {
   return (
     <Tab.Navigator
+      initialRouteName="Home"
       screenOptions={({ route }) => ({
         headerShown: false,
+        tabBarStyle: {
+          height: 64,
+          paddingBottom: 8,
+          paddingTop: 6,
+        },
         tabBarIcon: ({ color, size }) => {
           let name = 'dashboard';
           if (route.name === 'Home') name = 'dashboard';
@@ -77,21 +87,25 @@ function TabWithFab() {
   return (
     <View style={styles.tabContainer}>
       <TabNavigator />
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => navigation.navigate('RecordSale')}
-      >
-        <MaterialIcons name="add-circle" size={56} color={theme.colors.primary} />
-      </TouchableOpacity>
-      <View style={styles.syncBadge}>
-        <MaterialIcons name="sync" size={18} color={iconColor} />
-        <Text style={styles.syncText}>{lastSyncedLabel}</Text>
-        {pendingCount > 0 && (
-          <View style={styles.syncCountContainer}>
-            <Text style={styles.syncCountText}>{pendingCount}</Text>
-          </View>
-        )}
+      <View style={styles.fabContainer} pointerEvents="box-none">
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => navigation.navigate('RecordSale')}
+        >
+          <MaterialIcons name="add-circle" size={56} color={theme.colors.primary} />
+        </TouchableOpacity>
       </View>
+      {(pendingCount > 0 || syncing) && (
+        <View style={styles.syncBadge}>
+          <MaterialIcons name="sync" size={18} color={iconColor} />
+          <Text style={styles.syncText}>{lastSyncedLabel}</Text>
+          {pendingCount > 0 && (
+            <View style={styles.syncCountContainer}>
+              <Text style={styles.syncCountText}>{pendingCount}</Text>
+            </View>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -105,7 +119,10 @@ export default function MainTabs() {
       <Stack.Screen name="RecordExpense" component={RecordExpenseScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="RecordDebt" component={RecordDebtScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="CreateBranch" component={BranchCreateScreen} options={{ presentation: 'modal' }} />
+      <Stack.Screen name="BranchList" component={BranchListScreen} options={{ presentation: 'modal' }} />
+      <Stack.Screen name="CreateWorkspace" component={WorkspaceSetupScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="EditItem" component={EditItemScreen} options={{ presentation: 'modal' }} />
+      <Stack.Screen name="Settings" component={SettingsScreen} options={{ presentation: 'modal' }} />
     </Stack.Navigator>
   );
 }
@@ -114,10 +131,14 @@ const styles = StyleSheet.create({
   tabContainer: {
     flex: 1,
   },
-  fab: {
+  fabContainer: {
     position: 'absolute',
-    bottom: 32,
-    right: 20,
+    bottom: 72,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  fab: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
@@ -126,13 +147,19 @@ const styles = StyleSheet.create({
   },
   syncBadge: {
     position: 'absolute',
-    bottom: 16,
-    left: 16,
-    backgroundColor: 'rgba(255,255,255,0.85)',
-    borderRadius: 16,
-    padding: 6,
+    bottom: 72,
+    left: 12,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
   },
   syncCountContainer: {
     position: 'absolute',
@@ -153,6 +180,6 @@ const styles = StyleSheet.create({
   syncText: {
     fontSize: 10,
     color: '#475569',
-    marginTop: 4,
+    marginLeft: 4,
   },
 });

@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
-  Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
@@ -20,11 +20,20 @@ export default function SalesScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
   const workspace = useWorkspace();
+  const { width } = useWindowDimensions();
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState([]);
+  const isCompact = width < 390;
+  const contentWidth = Math.min(width - (isCompact ? 20 : 32), 820);
+  const listPadding = isCompact ? 12 : 16;
+
+  useEffect(() => {
+    setCart([]);
+    setItems([]);
+  }, [workspace.currentWorkspaceId]);
 
   useEffect(() => {
     const loadItems = async () => {
@@ -80,7 +89,22 @@ export default function SalesScreen({ navigation }) {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}> 
-      <View style={styles.searchContainer}> 
+      <View style={[styles.pageHeader, { alignSelf: 'center', width: contentWidth, paddingHorizontal: listPadding }]}> 
+        <TouchableOpacity
+          onPress={() => {
+            if (navigation.canGoBack()) {
+              navigation.goBack();
+            }
+          }}
+          style={[styles.backButton, { borderColor: theme.colors.border, opacity: navigation.canGoBack() ? 1 : 0.35 }]}
+          disabled={!navigation.canGoBack()}
+        >
+          <MaterialIcons name="arrow-back" size={20} color={theme.colors.textPrimary} />
+        </TouchableOpacity>
+        <Text style={[styles.pageTitle, { color: theme.colors.textPrimary }]}>Sales</Text>
+      </View>
+
+      <View style={[styles.searchContainer, { paddingHorizontal: listPadding, alignSelf: 'center', width: contentWidth }]}> 
         <TextInput
           value={search}
           onChangeText={setSearch}
@@ -97,7 +121,8 @@ export default function SalesScreen({ navigation }) {
         <FlatList
           data={filteredItems}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={{ padding: 16 }}
+          contentContainerStyle={{ paddingHorizontal: listPadding, paddingBottom: 24 }}
+          style={{ alignSelf: 'center', width: contentWidth }}
           ListEmptyComponent={
             <View style={{ padding: 24, alignItems: 'center' }}>
               <Subtle>No items found</Subtle>
@@ -109,7 +134,7 @@ export default function SalesScreen({ navigation }) {
               <Card style={styles.itemCard}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 16 }}>{item.name}</Text>
+                    <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: isCompact ? 15 : 16 }}>{item.name}</Text>
                     <Subtle>{item.category || 'Uncategorized'}</Subtle>
                     <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>In stock: {item.quantity}</Text>
                   </View>
@@ -129,10 +154,10 @@ export default function SalesScreen({ navigation }) {
       )}
 
       {cart.length > 0 && (
-        <View style={[styles.cartFooter, { backgroundColor: theme.colors.card }]}> 
+        <View style={[styles.cartFooter, { backgroundColor: theme.colors.card, alignSelf: 'center', width: contentWidth, paddingHorizontal: listPadding }]}> 
           <View>
             <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>{cart.length} item(s)</Text>
-            <Text style={{ color: theme.colors.textSecondary }}>Total: ${cartTotal.toFixed(2)}</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>Total: ₦{cartTotal.toLocaleString()}</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <TouchableOpacity onPress={() => setCart([])} style={[styles.cartAction, { backgroundColor: theme.colors.border }]}> 
@@ -150,8 +175,27 @@ export default function SalesScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  pageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 10,
+    paddingBottom: 6,
+  },
+  backButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  pageTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
   searchContainer: {
-    padding: 16,
+    paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center'
   },
@@ -176,7 +220,7 @@ const styles = StyleSheet.create({
     borderRadius: 10
   },
   cartFooter: {
-    padding: 16,
+    paddingVertical: 14,
     borderTopWidth: 1,
     borderColor: '#E1E1E1',
     flexDirection: 'row',

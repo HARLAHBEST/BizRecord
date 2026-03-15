@@ -7,6 +7,9 @@ import {
   StyleSheet,
   ActivityIndicator,
   ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../theme/ThemeContext';
@@ -15,6 +18,7 @@ export default function RegisterScreen({ navigation }) {
   const { register } = useAuth();
   const themeContext = useTheme();
   const theme = themeContext.theme;
+  const { width } = useWindowDimensions();
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -23,6 +27,8 @@ export default function RegisterScreen({ navigation }) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const isCompact = width < 380;
+  const formWidth = Math.min(width - (isCompact ? 24 : 36), 500);
 
   const handleRegister = async () => {
     setError(null);
@@ -48,15 +54,19 @@ export default function RegisterScreen({ navigation }) {
   };
 
   return (
-    <ScrollView
-      contentContainerStyle={[styles.container, { backgroundColor: theme.colors.background }]}
-      keyboardShouldPersistTaps="handled"
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: theme.colors.background }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <Text style={[styles.logo, { color: theme.colors.textPrimary }]}>Booker</Text>
-      <View style={[styles.form, { backgroundColor: theme.colors.card }]}> 
+      <ScrollView
+        contentContainerStyle={[styles.container, { backgroundColor: theme.colors.background }]}
+        keyboardShouldPersistTaps="handled"
+      >
+      <Text style={[styles.logo, { color: theme.colors.textPrimary, fontSize: isCompact ? 30 : 36 }]}>Booker</Text>
+      <View style={[styles.form, { backgroundColor: theme.colors.card, width: formWidth }]}> 
         <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Name</Text>
         <TextInput
-          style={[styles.input, { color: theme.colors.textPrimary }]}
+          style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
           value={name}
           onChangeText={setName}
           placeholder="Your full name"
@@ -65,7 +75,7 @@ export default function RegisterScreen({ navigation }) {
 
         <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Phone</Text>
         <TextInput
-          style={[styles.input, { color: theme.colors.textPrimary }]}
+          style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
           value={phone}
           onChangeText={setPhone}
           placeholder="08012345678"
@@ -75,7 +85,7 @@ export default function RegisterScreen({ navigation }) {
 
         <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Email</Text>
         <TextInput
-          style={[styles.input, { color: theme.colors.textPrimary }]}
+          style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
           value={email}
           onChangeText={setEmail}
           placeholder="you@store.com"
@@ -86,7 +96,7 @@ export default function RegisterScreen({ navigation }) {
 
         <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Password</Text>
         <TextInput
-          style={[styles.input, { color: theme.colors.textPrimary }]}
+          style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
           value={password}
           onChangeText={setPassword}
           placeholder="••••••"
@@ -96,7 +106,7 @@ export default function RegisterScreen({ navigation }) {
 
         <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Confirm Password</Text>
         <TextInput
-          style={[styles.input, { color: theme.colors.textPrimary }]}
+          style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
           value={confirmPassword}
           onChangeText={setConfirmPassword}
           placeholder="••••••"
@@ -122,16 +132,24 @@ export default function RegisterScreen({ navigation }) {
           </Text>
         </TouchableOpacity>
       </View>
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
-  logo: { fontSize: 36, fontWeight: '700', marginBottom: 24 },
-  form: { width: '100%', borderRadius: 14, padding: 16 },
+  logo: { fontWeight: '700', marginBottom: 24 },
+  form: { borderRadius: 14, padding: 16 },
   label: { fontSize: 12, marginTop: 8 },
-  input: { paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, marginTop: 6, backgroundColor: 'transparent' },
+  input: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginTop: 6,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+  },
   button: { padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 6 },
   buttonText: { color: '#fff', fontWeight: '700' }
 });

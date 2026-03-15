@@ -6,7 +6,7 @@ import Constants from 'expo-constants';
 // 2) Fallback: use `process.env.EXPO_PUBLIC_API_URL` (Expo managed env) or `process.env.API_URL`.
 // 3) Fallback: local emulator defaults for fast dev.
 const getConfiguredApiUrl = () => {
-  const expoUrl = Constants.manifest?.extra?.apiUrl || Constants.expoConfig?.extra?.apiUrl;
+  const expoUrl = Constants.expoConfig?.extra?.apiUrl;
   if (expoUrl) return expoUrl;
   if (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_API_URL) return process.env.EXPO_PUBLIC_API_URL;
   if (typeof process !== 'undefined' && process.env?.API_URL) return process.env.API_URL;

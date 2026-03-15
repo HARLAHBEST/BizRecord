@@ -19,7 +19,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 export default function RecordDebtScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
-  const { currentWorkspaceId, syncInfo } = useWorkspace();
+  const { currentWorkspaceId, queueAction } = useWorkspace();
 
   const [customer, setCustomer] = useState('');
   const [phone, setPhone] = useState('');
@@ -70,8 +70,8 @@ export default function RecordDebtScreen({ navigation }) {
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
     } catch (err) {
-      if (syncInfo?.queueAction) {
-        await syncInfo.queueAction({
+      if (queueAction) {
+        await queueAction({
           method: 'post',
           path: `/workspaces/${currentWorkspaceId}/transactions`,
           body: payload,

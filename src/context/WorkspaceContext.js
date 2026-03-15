@@ -15,7 +15,7 @@ export const WorkspaceProvider = function({ children }) {
 
   const [workspaces, setWorkspaces] = useState([]);
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [pendingActions, setPendingActions] = useState([]);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -137,6 +137,7 @@ export const WorkspaceProvider = function({ children }) {
     if (!token) {
       setWorkspaces([]);
       setCurrentWorkspaceId(null);
+      setLoading(false);
       return;
     }
 
@@ -196,8 +197,17 @@ export const WorkspaceProvider = function({ children }) {
       syncInfo,
       queueAction,
       processPendingActions,
+      refreshWorkspaces: loadWorkspaces,
     }),
-    [workspaces, currentWorkspaceId, loading, syncInfo, queueAction, processPendingActions],
+    [
+      workspaces,
+      currentWorkspaceId,
+      loading,
+      syncInfo,
+      queueAction,
+      processPendingActions,
+      loadWorkspaces,
+    ],
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
