@@ -19,7 +19,7 @@ import { api } from '../api/client';
 const AddItemScreen = function() {
   const themeContext = useTheme();
   const theme = themeContext.theme;
-  const { currentWorkspaceId, syncInfo } = useWorkspace();
+  const { currentWorkspaceId, queueAction } = useWorkspace();
 
   const [name, setName] = useState('');
   const [quantity, setQuantity] = useState('1');
@@ -72,8 +72,8 @@ const AddItemScreen = function() {
       setLocation('');
       setMinStock('1');
     } catch (err) {
-      if (syncInfo?.queueAction) {
-        await syncInfo.queueAction({
+      if (queueAction) {
+        await queueAction({
           method: 'post',
           path: `/workspaces/${currentWorkspaceId}/inventory`,
           body: payload,

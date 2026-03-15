@@ -28,7 +28,7 @@ const EXPENSE_CATEGORIES = [
 export default function RecordExpenseScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
-  const { currentWorkspaceId, syncInfo } = useWorkspace();
+  const { currentWorkspaceId, queueAction } = useWorkspace();
 
   const [category, setCategory] = useState('');
   const [amount, setAmount] = useState('');
@@ -67,7 +67,7 @@ export default function RecordExpenseScreen({ navigation }) {
 
       Alert.alert(
         'Expense recorded',
-        `${selectedCategory.label}: $${parseFloat(amount).toFixed(2)}\nMethod: ${paymentMethod}`,
+        `${selectedCategory.label}: ₦${parseFloat(amount).toLocaleString()}\nMethod: ${paymentMethod}`,
         [
           {
             text: 'OK',
@@ -78,8 +78,8 @@ export default function RecordExpenseScreen({ navigation }) {
         ]
       );
     } catch (err) {
-      if (syncInfo?.queueAction) {
-        await syncInfo.queueAction({
+      if (queueAction) {
+        await queueAction({
           method: 'post',
           path: `/workspaces/${currentWorkspaceId}/transactions`,
           body: payload,

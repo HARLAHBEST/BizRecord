@@ -40,7 +40,15 @@ export class WorkspaceService {
       users: [user],
     });
 
-    return await this.workspacesRepository.save(workspace);
+    const saved = await this.workspacesRepository.save(workspace);
+
+    // Promote user to admin when they create their first workspace
+    if (user.role === 'user') {
+      user.role = 'admin';
+      await this.usersRepository.save(user);
+    }
+
+    return saved;
   }
 
   async getWorkspaces(userId: string) {

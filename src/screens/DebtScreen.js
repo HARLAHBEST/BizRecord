@@ -8,6 +8,7 @@ import {
   Linking,
   ActivityIndicator,
   Alert,
+  useWindowDimensions,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
@@ -33,10 +34,14 @@ export default function DebtScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
   const { currentWorkspaceId } = useWorkspace();
+  const { width } = useWindowDimensions();
 
   const [debts, setDebts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const isCompact = width < 390;
+  const contentWidth = Math.min(width - (isCompact ? 20 : 32), 820);
+  const edgePadding = isCompact ? 12 : 16;
 
   useEffect(() => {
     const loadDebts = async () => {
@@ -99,13 +104,26 @@ export default function DebtScreen({ navigation }) {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}> 
-      <View style={styles.header}>
-        <View>
-          <Text style={[styles.title, { color: theme.colors.textPrimary }]}>Who Owes Me</Text>
+      <View style={[styles.header, { alignSelf: 'center', width: contentWidth, paddingHorizontal: edgePadding }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity
+            onPress={() => {
+              if (navigation.canGoBack()) {
+                navigation.goBack();
+              }
+            }}
+            style={[styles.backButton, { borderColor: theme.colors.border, opacity: navigation.canGoBack() ? 1 : 0.35 }]}
+            disabled={!navigation.canGoBack()}
+          >
+            <MaterialIcons name="arrow-back" size={20} color={theme.colors.textPrimary} />
+          </TouchableOpacity>
+          <View>
+          <Text style={[styles.title, { color: theme.colors.textPrimary, fontSize: isCompact ? 20 : 22 }]}>Who Owes Me</Text>
           <Subtle>
             {pendingCount} pending • Tap the button to send a reminder
           </Subtle>
           {error ? <Text style={[styles.errorText, { color: theme.colors.error }]}>{error}</Text> : null}
+          </View>
         </View>
         <TouchableOpacity
           onPress={() => navigation.navigate('RecordDebt')}
@@ -122,7 +140,8 @@ export default function DebtScreen({ navigation }) {
         <FlatList
           data={debts}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={{ padding: 16 }}
+          contentContainerStyle={{ paddingHorizontal: edgePadding, paddingBottom: 24 }}
+          style={{ alignSelf: 'center', width: contentWidth }}
           ListEmptyComponent={() => (
             <View style={{ alignItems: 'center', marginTop: 40 }}>
               <Text style={{ color: theme.colors.textSecondary }}>No debts yet.</Text>
@@ -136,7 +155,7 @@ export default function DebtScreen({ navigation }) {
               <Card style={styles.card}>
                 <View style={styles.row}>
                   <View style={styles.info}>
-                    <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 16 }}>
+                    <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: isCompact ? 15 : 16 }}>
                       {item.customerName || 'Unknown'}
                     </Text>
                     <Subtle>{dueInfo.label}</Subtle>
@@ -176,10 +195,20 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
+    alignItems: 'flex-start',
+    paddingTop: 14,
+    paddingBottom: 10,
   },
   title: { fontSize: 22, fontWeight: '700', marginBottom: 4 },
+  backButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
   errorText: { marginTop: 8 },
   addButton: {
     flexDirection: 'row',
@@ -192,7 +221,7 @@ const styles = StyleSheet.create({
   card: { marginBottom: 12 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   info: { flex: 1 },
-  amountContainer: { alignItems: 'flex-end' },
+  amountContainer: { alignItems: 'flex-end', marginLeft: 12, maxWidth: '45%' },
   whatsappButton: { marginTop: 8, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
   payButton: { marginTop: 8, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
 });

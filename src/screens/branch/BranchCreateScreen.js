@@ -11,44 +11,52 @@ import {
   Alert,
 } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
-import { useWorkspace } from '../../context/WorkspaceContext';
+import { useAuth } from '../../context/AuthContext';
+import { api } from '../../api/client';
 import { Card, Title } from '../../components/UI';
 import { MaterialIcons } from '@expo/vector-icons';
 
 export default function BranchCreateScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
-  const workspace = useWorkspace();
+  const { user } = useAuth();
 
   const [branchName, setBranchName] = useState('');
   const [location, setLocation] = useState('');
   const [manager, setManager] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleCreateBranch = () => {
+  const userRole = user?.role || 'user';
+  const canCreateWorkspace = userRole === 'super_admin' || userRole === 'admin';
+
+  const handleCreateBranch = async () => {
     if (!branchName || !location) {
       Alert.alert('Validation Error', 'Please fill in branch name and location');
       return;
     }
 
-    if (!workspace.isAdmin()) {
-      Alert.alert('Permission Denied', 'Only workspace admins can create branches');
-      return;
-    }
+    setLoading(true);
+    try {
+      await api.post('/workspaces', {
+        name: branchName.trim(),
+        description: [location, manager, phone, address].filter(Boolean).join(' | '),
+      });
 
-    Alert.alert(
-      'Branch Created',
-      `${branchName} - ${location}`,
-      [
+      Alert.alert('Branch Created', `${branchName} - ${location}`, [
         {
           text: 'OK',
           onPress: () => {
             navigation.goBack();
           },
         },
-      ]
-    );
+      ]);
+    } catch (err) {
+      Alert.alert('Error', err?.message || 'Unable to create branch');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -69,7 +77,7 @@ export default function BranchCreateScreen({ navigation }) {
         </View>
 
         {/* Permission Check */}
-        {!workspace.isAdmin() && (
+        {!canCreateWorkspace && (
           <Card style={{ backgroundColor: theme.colors.warning + '20', borderLeftWidth: 4, borderLeftColor: theme.colors.warning, marginBottom: 16 }}>
             <View style={{ flexDirection: 'row' }}>
               <MaterialIcons name="lock" size={20} color={theme.colors.warning} style={{ marginRight: 8 }} />
@@ -96,7 +104,7 @@ export default function BranchCreateScreen({ navigation }) {
             placeholderTextColor={theme.colors.textSecondary}
             value={branchName}
             onChangeText={setBranchName}
-            editable={workspace.isAdmin()}
+            editable={canCreateWorkspace}
           />
 
           <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8, marginTop: 12 }}>Location *</Text>
@@ -113,7 +121,7 @@ export default function BranchCreateScreen({ navigation }) {
             placeholderTextColor={theme.colors.textSecondary}
             value={location}
             onChangeText={setLocation}
-            editable={workspace.isAdmin()}
+            editable={canCreateWorkspace}
           />
 
           <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8, marginTop: 12 }}>Branch Manager</Text>
@@ -130,7 +138,7 @@ export default function BranchCreateScreen({ navigation }) {
             placeholderTextColor={theme.colors.textSecondary}
             value={manager}
             onChangeText={setManager}
-            editable={workspace.isAdmin()}
+            editable={canCreateWorkspace}
           />
         </Card>
 
@@ -151,7 +159,7 @@ export default function BranchCreateScreen({ navigation }) {
             keyboardType="phone-pad"
             value={phone}
             onChangeText={setPhone}
-            editable={workspace.isAdmin()}
+            editable={canCreateWorkspace}
           />
 
           <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8, marginTop: 12 }}>Address</Text>
@@ -171,7 +179,7 @@ export default function BranchCreateScreen({ navigation }) {
             onChangeText={setAddress}
             multiline
             numberOfLines={3}
-            editable={workspace.isAdmin()}
+            editable={canCreateWorkspace}
           />
         </Card>
 
@@ -180,21 +188,22 @@ export default function BranchCreateScreen({ navigation }) {
           style={[
             styles.submitButton,
             {
-              backgroundColor: workspace.isAdmin() ? theme.colors.primary : theme.colors.border,
+              backgroundColor: canCreateWorkspace ? theme.colors.primary : theme.colors.border,
+              opacity: loading ? 0.7 : 1,
             },
           ]}
           onPress={handleCreateBranch}
-          disabled={!workspace.isAdmin()}
+          disabled={!canCreateWorkspace || loading}
         >
-          <MaterialIcons name="add-location-alt" size={20} color={workspace.isAdmin() ? '#fff' : theme.colors.textSecondary} />
+          <MaterialIcons name="add-location-alt" size={20} color={canCreateWorkspace ? '#fff' : theme.colors.textSecondary} />
           <Text
             style={{
-              color: workspace.isAdmin() ? '#fff' : theme.colors.textSecondary,
+              color: canCreateWorkspace ? '#fff' : theme.colors.textSecondary,
               fontWeight: '600',
               marginLeft: 8,
             }}
           >
-            Create Branch
+            {loading ? 'Creating…' : 'Create Branch'}
           </Text>
         </TouchableOpacity>
       </ScrollView>

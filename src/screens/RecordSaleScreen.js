@@ -19,7 +19,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 export default function RecordSaleScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
-  const { currentWorkspaceId, syncInfo } = useWorkspace();
+  const { currentWorkspaceId, queueAction } = useWorkspace();
 
   const [itemName, setItemName] = useState('');
   const [quantity, setQuantity] = useState('');
@@ -57,7 +57,7 @@ export default function RecordSaleScreen({ navigation }) {
     try {
       await api.post(`/workspaces/${currentWorkspaceId}/transactions`, payload);
 
-      Alert.alert('Sale recorded', `${quantity} × ${itemName} = $${total.toFixed(2)}\nCustomer: ${customer || 'Walk-in'}`, [
+      Alert.alert('Sale recorded', `${quantity} × ${itemName} = ₦${total.toLocaleString()}\nCustomer: ${customer || 'Walk-in'}`, [
         {
           text: 'OK',
           onPress: () => {
@@ -66,8 +66,8 @@ export default function RecordSaleScreen({ navigation }) {
         },
       ]);
     } catch (err) {
-      if (syncInfo?.queueAction) {
-        await syncInfo.queueAction({
+      if (queueAction) {
+        await queueAction({
           method: 'post',
           path: `/workspaces/${currentWorkspaceId}/transactions`,
           body: payload,
@@ -142,7 +142,7 @@ export default function RecordSaleScreen({ navigation }) {
               />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>Price per unit *</Text>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>Price per unit (₦) *</Text>
               <TextInput
                 style={[
                   styles.input,
@@ -167,7 +167,7 @@ export default function RecordSaleScreen({ navigation }) {
               <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                 <Text style={{ color: theme.colors.textSecondary }}>Total:</Text>
                 <Text style={{ color: theme.colors.primary, fontWeight: '700', fontSize: 16 }}>
-                  ${(parseFloat(price) * parseInt(quantity)).toFixed(2)}
+                  ₦{(parseFloat(price) * parseInt(quantity)).toLocaleString()}
                 </Text>
               </View>
             </View>

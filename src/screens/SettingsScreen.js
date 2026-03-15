@@ -7,7 +7,8 @@ import {
   TouchableOpacity,
   Modal,
   Platform,
-  StatusBar
+  StatusBar,
+  useWindowDimensions,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme/ThemeContext';
@@ -19,36 +20,55 @@ const SettingsScreen = function({ navigation }) {
   const theme = themeContext.theme;
   const workspace = useWorkspace();
   const { user, logout } = useAuth();
+  const { width } = useWindowDimensions();
 
   const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
 
   const currentWorkspace = workspace.workspaces.find((w) => w.id === workspace.currentWorkspaceId);
-  const userRole = user?.role || 'User';
-  const canCreateWorkspace = userRole === 'super_admin' || userRole === 'admin';
+  const userRole = user?.role || 'user';
+  const isWorkspaceOwner = userRole === 'super_admin' || userRole === 'admin' ||
+    (currentWorkspace?.createdBy?.id && currentWorkspace.createdBy.id === user?.id);
+  const contentWidth = Math.min(width - 32, 760);
+  const horizontalPadding = width < 380 ? 12 : 16;
+  const titleSize = width < 380 ? 24 : 28;
+  const subtitleSize = width < 380 ? 14 : 16;
 
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: theme.colors.background }]}
       contentContainerStyle={{
+        alignItems: 'center',
+        paddingHorizontal: horizontalPadding,
         paddingBottom: Platform.OS === 'web' ? 90 : 100
       }}
     >
       <StatusBar barStyle="dark-content" />
-      <View style={styles.screenHeader}>
+      <View style={[styles.screenHeader, { width: contentWidth }]}> 
+        <TouchableOpacity
+          onPress={() => {
+            if (navigation.canGoBack()) {
+              navigation.goBack();
+            }
+          }}
+          style={[styles.backButton, { borderColor: theme.colors.border, opacity: navigation.canGoBack() ? 1 : 0.35 }]}
+          disabled={!navigation.canGoBack()}
+        >
+          <MaterialIcons name="arrow-back" size={20} color={theme.colors.textPrimary} />
+        </TouchableOpacity>
         <Text
-          style={[styles.screenTitle, { color: theme.colors.textPrimary }]}
+          style={[styles.screenTitle, { color: theme.colors.textPrimary, fontSize: titleSize }]}
         >
           Settings
         </Text>
         <Text
-          style={[styles.screenSubtitle, { color: theme.colors.textSecondary }]}
+          style={[styles.screenSubtitle, { color: theme.colors.textSecondary, fontSize: subtitleSize }]}
         >
           Manage your app preferences
         </Text>
       </View>
 
       <View
-        style={[styles.settingsCard, { backgroundColor: theme.colors.card }]}
+        style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}
       >
         <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
@@ -131,8 +151,9 @@ const SettingsScreen = function({ navigation }) {
       </View>
 
       <View
-        style={[styles.settingsCard, { backgroundColor: theme.colors.card }]}
+        style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}
       >
+        {/* Switch Workspace */}
         <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
             <MaterialIcons
@@ -141,83 +162,80 @@ const SettingsScreen = function({ navigation }) {
               color={theme.colors.primary}
             />
             <View style={styles.settingText}>
-              <Text
-                style={[
-                  styles.settingTitle,
-                  { color: theme.colors.textPrimary }
-                ]}
-              >
-                Current Workspace
+              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>
+                Switch Workspace
               </Text>
-              <Text
-                style={[
-                  styles.settingDescription,
-                  { color: theme.colors.textSecondary }
-                ]}
-              >
-                {currentWorkspace?.name}
+              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
+                {currentWorkspace?.name || 'No workspace selected'}
               </Text>
             </View>
           </View>
-          <TouchableOpacity
-            onPress={function() {
-              setShowWorkspaceModal(true);
-            }}
-          >
-            <MaterialIcons
-              name="chevron-right"
-              size={24}
-              color={theme.colors.textSecondary}
-            />
+          <TouchableOpacity onPress={function() { setShowWorkspaceModal(true); }}>
+            <MaterialIcons name="swap-horiz" size={24} color={theme.colors.primary} />
           </TouchableOpacity>
         </View>
 
-        {canCreateWorkspace && (
-          <View
-            style={[styles.settingItem, { borderBottomWidth: 0 }]}
-          >
+        {/* Create New Workspace */}
+        <View style={styles.settingItem}>
+          <View style={styles.settingInfo}>
+            <MaterialIcons name="add-business" size={24} color={theme.colors.primary} />
+            <View style={styles.settingText}>
+              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>
+                Create New Workspace
+              </Text>
+              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
+                Set up a separate workspace
+              </Text>
+            </View>
+          </View>
+          <TouchableOpacity onPress={function() { navigation.navigate('CreateWorkspace'); }}>
+            <MaterialIcons name="add-circle" size={24} color={theme.colors.primary} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Branch Manager — workspace owners / admins only */}
+        {isWorkspaceOwner && (
+          <View style={styles.settingItem}>
             <View style={styles.settingInfo}>
-              <MaterialIcons
-                name="add-location-alt"
-                size={24}
-                color={theme.colors.primary}
-              />
+              <MaterialIcons name="account-tree" size={24} color={theme.colors.primary} />
               <View style={styles.settingText}>
-                <Text
-                  style={[
-                    styles.settingTitle,
-                    { color: theme.colors.textPrimary }
-                  ]}
-                >
+                <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>
+                  Branch Manager
+                </Text>
+                <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
+                  View and manage workspace branches
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity onPress={function() { navigation.navigate('BranchList'); }}>
+              <MaterialIcons name="chevron-right" size={24} color={theme.colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Create Branch */}
+        {isWorkspaceOwner && (
+          <View style={[styles.settingItem, { borderBottomWidth: 0 }]}>
+            <View style={styles.settingInfo}>
+              <MaterialIcons name="add-location-alt" size={24} color={theme.colors.primary} />
+              <View style={styles.settingText}>
+                <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>
                   Create Branch
                 </Text>
-                <Text
-                  style={[
-                    styles.settingDescription,
-                    { color: theme.colors.textSecondary }
-                  ]}
-                >
+                <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
                   Add new branch to workspace
                 </Text>
               </View>
             </View>
-            <TouchableOpacity
-              onPress={function() {
-                navigation.navigate('CreateBranch');
-              }}
-            >
-              <MaterialIcons
-                name="add-circle"
-                size={24}
-                color={theme.colors.primary}
-              />
+            <TouchableOpacity onPress={function() { navigation.navigate('CreateBranch'); }}>
+              <MaterialIcons name="add-circle" size={24} color={theme.colors.primary} />
             </TouchableOpacity>
           </View>
         )}
       </View>
 
       <View
-        style={[styles.settingsCard, { backgroundColor: theme.colors.card }]}
+        style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}
       >
         <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
@@ -359,7 +377,7 @@ const SettingsScreen = function({ navigation }) {
       </Modal>
 
       <View
-        style={[styles.settingsCard, { backgroundColor: theme.colors.card }]}
+        style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}
       >
         <TouchableOpacity
           style={styles.logoutButton}
@@ -376,13 +394,21 @@ const SettingsScreen = function({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    width: '100%',
-    height: '100%'
+    width: '100%'
   },
   screenHeader: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 4,
     paddingTop: 20,
-    paddingBottom: 20
+    paddingBottom: 12
+  },
+  backButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
   },
   screenTitle: {
     fontSize: 28,
@@ -393,7 +419,7 @@ const styles = StyleSheet.create({
     fontSize: 16
   },
   settingsCard: {
-    margin: 20,
+    marginTop: 12,
     borderRadius: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -405,7 +431,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 20,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6'
   },
