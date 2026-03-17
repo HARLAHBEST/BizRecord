@@ -27,7 +27,19 @@ export class User {
   phone: string;
 
   @Column({ default: 'user' })
-  role: 'super_admin' | 'admin' | 'manager' | 'user';
+  role: 'super_admin' | 'admin' | 'owner' | 'manager' | 'staff' | 'user';
+
+  @Column({ default: 'pro' })
+  plan: 'basic' | 'pro';
+
+  @Column({ type: 'timestamp', nullable: true })
+  trialStartAt: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  trialEndsAt: Date | null;
+
+  @Column({ default: 'active' })
+  trialStatus: 'active' | 'expired' | 'converted';
 
   @Column({ default: true })
   isActive: boolean;

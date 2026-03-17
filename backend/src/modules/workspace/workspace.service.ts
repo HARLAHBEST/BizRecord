@@ -34,6 +34,7 @@ export class WorkspaceService {
 
       const canManageParent =
         parentWorkspace.createdBy?.id === userId ||
+        user.role === 'owner' ||
         user.role === 'admin' ||
         user.role === 'super_admin';
 
@@ -74,9 +75,9 @@ export class WorkspaceService {
 
     const saved = await this.workspacesRepository.save(workspace);
 
-    // Promote user to admin when they create their first workspace
-    if (user.role === 'user') {
-      user.role = 'admin';
+    // Ensure legacy users are upgraded to owner when they create a workspace
+    if (user.role === 'user' || user.role === 'admin') {
+      user.role = 'owner';
       await this.usersRepository.save(user);
     }
 
@@ -159,6 +160,7 @@ export class WorkspaceService {
 
     const canManageWorkspace =
       workspace.createdBy?.id === requesterId ||
+      requester.role === 'owner' ||
       requester.role === 'admin' ||
       requester.role === 'super_admin';
 

@@ -16,7 +16,6 @@
       "android"
     ],
     "scheme": "bizrecord",
-    "sdkVersion": "49.0.0",
     "runtimeVersion": "1.0.0",
     "updates": {
       "fallbackToCacheOnError": true
@@ -62,7 +61,6 @@
     "backgroundColor": "#ffffff",
     "plugins": [],
     "extra": {
-      "apiUrl": "https://bizrecord-kk4y2.ondigitalocean.app",
       "eas": {
         "projectId": "595d2e24-df5b-4d3b-b308-7c45a082711b"
       }
