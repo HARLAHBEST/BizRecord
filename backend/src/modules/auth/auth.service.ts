@@ -24,13 +24,19 @@ export class AuthService {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const trialStartAt = new Date();
+    const trialEndsAt = new Date(trialStartAt.getTime() + 14 * 24 * 60 * 60 * 1000);
 
     const user = this.usersRepository.create({
       email,
       password: hashedPassword,
       name,
       phone,
-      role: 'user',
+      role: 'owner',
+      plan: 'pro',
+      trialStartAt,
+      trialEndsAt,
+      trialStatus: 'active',
     });
 
     await this.usersRepository.save(user);
@@ -50,6 +56,16 @@ export class AuthService {
     const passwordMatch = await bcrypt.compare(password, user.password);
     if (!passwordMatch) {
       throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if (user.trialStatus === 'active' && user.trialEndsAt && user.trialEndsAt.getTime() <= Date.now()) {
+      user.trialStatus = 'expired';
+      await this.usersRepository.save(user);
+      throw new UnauthorizedException('Your 14-day free trial has ended. Please upgrade to continue.');
+    }
+
+    if (user.trialStatus === 'expired') {
+      throw new UnauthorizedException('Your 14-day free trial has ended. Please upgrade to continue.');
     }
 
     const payload = { sub: user.id, email: user.email };
