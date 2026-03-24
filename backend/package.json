@@ -18,6 +18,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:mailgun": "ts-node -r tsconfig-paths/register scripts/test-mailgun.ts",
     "typeorm": "typeorm-ts-node-commonjs",
     "migration:run": "npm run typeorm migration:run -- -d src/config/database.config.ts",
     "migration:revert": "npm run typeorm migration:revert -- -d src/config/database.config.ts",

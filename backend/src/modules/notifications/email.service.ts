@@ -5,7 +5,7 @@ type SendEmailInput = {
   to: string;
   subject: string;
   text: string;
-  html: string;
+  html?: string;
 };
 
 @Injectable()
@@ -15,49 +15,45 @@ export class EmailService {
   constructor(private configService: ConfigService) {}
 
   async sendEmail(input: SendEmailInput): Promise<void> {
-    const enabled = (this.configService.get<string>('MAILJET_ENABLED') || 'true') === 'true';
+    const enabled = (this.configService.get<string>('MAILGUN_ENABLED') || 'true') === 'true';
     if (!enabled) {
-      this.logger.log(`MAILJET_ENABLED=false. Skipping email send to ${input.to}`);
+      this.logger.log(`MAILGUN_ENABLED=false. Skipping email send to ${input.to}`);
       return;
     }
 
-    const apiKey = this.configService.get<string>('MAILJET_API_KEY');
-    const apiSecret = this.configService.get<string>('MAILJET_API_SECRET');
-    const fromEmail = this.configService.get<string>('MAILJET_FROM_EMAIL');
-    const fromName = this.configService.get<string>('MAILJET_FROM_NAME') || 'BizRecord';
+    const apiKey = this.configService.get<string>('MAILGUN_API_KEY');
+    const domain = this.configService.get<string>('MAILGUN_DOMAIN');
+    const baseUrl = this.configService.get<string>('MAILGUN_BASE_URL') || 'https://api.mailgun.net';
+    const fromEmail = this.configService.get<string>('MAILGUN_FROM_EMAIL') || 'no-reply@bizrecord.tech';
+    const fromName = this.configService.get<string>('MAILGUN_FROM_NAME') || 'BizRecord';
 
-    if (!apiKey || !apiSecret || !fromEmail) {
-      this.logger.error('Missing Mailjet credentials/config. Required: MAILJET_API_KEY, MAILJET_API_SECRET, MAILJET_FROM_EMAIL');
+    if (!apiKey || !domain) {
+      this.logger.error('Missing Mailgun credentials/config. Required: MAILGUN_API_KEY, MAILGUN_DOMAIN');
       return;
     }
 
-    const auth = Buffer.from(`${apiKey}:${apiSecret}`).toString('base64');
+    const url = `${baseUrl}/v3/${domain}/messages`;
+    const auth = Buffer.from(`api:${apiKey}`).toString('base64');
 
-    const response = await fetch('https://api.mailjet.com/v3.1/send', {
+    const params = new URLSearchParams();
+    params.append('from', `${fromName} <${fromEmail}>`);
+    params.append('to', input.to);
+    params.append('subject', input.subject);
+    params.append('text', input.text);
+    if (input.html) params.append('html', input.html);
+
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         Authorization: `Basic ${auth}`,
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: JSON.stringify({
-        Messages: [
-          {
-            From: {
-              Email: fromEmail,
-              Name: fromName,
-            },
-            To: [{ Email: input.to }],
-            Subject: input.subject,
-            TextPart: input.text,
-            HTMLPart: input.html,
-          },
-        ],
-      }),
+      body: params.toString(),
     });
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`Mailjet send failed (${response.status}): ${body}`);
+      throw new Error(`Mailgun send failed (${response.status}): ${body}`);
     }
   }
 }
