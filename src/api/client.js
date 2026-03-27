@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import {
   getCachedInventory,
   getCachedTransactions,
+  getCachedCustomers,
   getOfflineWorkspacesForUi,
 } from '../storage/offlineStore';
 
@@ -91,6 +92,11 @@ const buildOfflineFallback = async (path, query) => {
       list = list.slice(0, take);
     }
     return list;
+  }
+
+  const customersMatch = path.match(/^\/workspaces\/([^/]+)\/customers$/);
+  if (customersMatch) {
+    return getCachedCustomers(customersMatch[1], query?.search);
   }
 
   return null;

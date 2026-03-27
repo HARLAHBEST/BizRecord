@@ -13,15 +13,17 @@ import {
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { api } from '../api/client';
-import { Card, Title, SkeletonBlock, EmptyState } from '../components/UI';
+import { cacheCustomers, getCachedCustomers } from '../storage/offlineStore';
+import { Card, Title, SkeletonBlock } from '../components/UI';
 import { MaterialIcons } from '@expo/vector-icons';
+import { useCustomerSelect } from '../context/CustomerSelectContext';
 
 export default function RecordDebtScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
   const { currentWorkspaceId, queueAction } = useWorkspace();
+  const { selectedCustomer } = useCustomerSelect();
 
-  const [customerId, setCustomerId] = useState('');
   const [customers, setCustomers] = useState([]);
   const [phone, setPhone] = useState('');
   const [amount, setAmount] = useState('');
@@ -37,9 +39,12 @@ export default function RecordDebtScreen({ navigation }) {
       }
       try {
         const data = await api.get(`/workspaces/${currentWorkspaceId}/customers`);
-        setCustomers(Array.isArray(data) ? data : []);
+        const list = Array.isArray(data) ? data : [];
+        setCustomers(list);
+        cacheCustomers(currentWorkspaceId, list).catch(() => null);
       } catch {
-        setCustomers([]);
+        const cached = await getCachedCustomers(currentWorkspaceId);
+        setCustomers(Array.isArray(cached) ? cached : []);
       }
     };
     loadCustomers();
@@ -63,8 +68,8 @@ export default function RecordDebtScreen({ navigation }) {
       phone: phone || undefined,
       dueDate: dueDate || undefined,
       notes: notes || undefined,
-      customerId: customerId || undefined,
-      customerName: customers.find((c) => c.id === customerId)?.name || undefined,
+      customerId: selectedCustomer?.id || undefined,
+      customerName: customers.find((c) => c.id === selectedCustomer?.id)?.name || selectedCustomer?.name || undefined,
       status: 'pending',
     };
 
@@ -134,12 +139,12 @@ export default function RecordDebtScreen({ navigation }) {
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
               <TouchableOpacity
                 style={{ flex: 1, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, padding: 10, backgroundColor: theme.colors.card }}
-                onPress={() => navigation.navigate('CustomerListScreen', { onSelect: (customer) => { setCustomerId(customer.id); navigation.goBack(); } })}
+                onPress={() => navigation.navigate('CustomerListScreen', { selectMode: true })}
                 accessibilityLabel="Select customer"
                 activeOpacity={0.7}
               >
-                <Text style={{ color: customerId ? theme.colors.textPrimary : theme.colors.textSecondary }}>
-                  {customerId ? (customers.find(c => c.id === customerId)?.name || 'Select customer') : 'Select customer'}
+                <Text style={{ color: selectedCustomer?.id ? theme.colors.textPrimary : theme.colors.textSecondary }}>
+                  {selectedCustomer?.id ? (customers.find(c => c.id === selectedCustomer.id)?.name || selectedCustomer.name || 'Select customer') : 'Select customer'}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => navigation.navigate('AddCustomerScreen')} style={{ marginLeft: 8 }} accessibilityLabel="Add customer" activeOpacity={0.7}>

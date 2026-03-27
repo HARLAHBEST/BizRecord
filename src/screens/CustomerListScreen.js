@@ -4,6 +4,7 @@ import { SkeletonBlock, EmptyState } from '../components/UI';
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { api } from '../api/client';
+import { cacheCustomers, getCachedCustomers } from '../storage/offlineStore';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useCustomerSelect } from '../context/CustomerSelectContext';
 import { useRoute } from '@react-navigation/native';
@@ -11,7 +12,7 @@ import { useRoute } from '@react-navigation/native';
 
 export default function CustomerListScreen({ navigation }) {
   const { theme } = useTheme();
-  const { currentWorkspaceId } = useWorkspace();
+  const { currentWorkspaceId, queueAction } = useWorkspace();
   const [customers, setCustomers] = useState([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -24,9 +25,12 @@ export default function CustomerListScreen({ navigation }) {
     setLoading(true);
     try {
       const data = await api.get(`/workspaces/${currentWorkspaceId}/customers`, search ? { search } : undefined);
-      setCustomers(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      setCustomers(list);
+      cacheCustomers(currentWorkspaceId, list).catch(() => null);
     } catch (err) {
-      Alert.alert('Error', err.message || 'Failed to load customers');
+      const cached = await getCachedCustomers(currentWorkspaceId, search);
+      setCustomers(Array.isArray(cached) ? cached : []);
     } finally {
       setLoading(false);
     }
@@ -40,7 +44,15 @@ export default function CustomerListScreen({ navigation }) {
       await api.delete(`/workspaces/${currentWorkspaceId}/customers/${id}`);
       loadCustomers();
     } catch (err) {
-      Alert.alert('Error', err.message || 'Failed to delete customer');
+      if (!err?.response && queueAction) {
+        await queueAction({
+          method: 'delete',
+          path: `/workspaces/${currentWorkspaceId}/customers/${id}`,
+        });
+        loadCustomers();
+      } else {
+        Alert.alert('Error', err.message || 'Failed to delete customer');
+      }
     }
   };
 

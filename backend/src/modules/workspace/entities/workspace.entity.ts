@@ -4,7 +4,6 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
-  ManyToMany,
   OneToMany,
   ManyToOne,
   JoinColumn,
@@ -12,6 +11,7 @@ import {
 import { User } from '../../auth/entities/user.entity';
 import { InventoryItem } from '../../inventory/entities/inventory-item.entity';
 import { Transaction } from '../../transactions/entities/transaction.entity';
+import { WorkspaceMembership } from './workspace-membership.entity';
 
 @Entity('workspaces')
 export class Workspace {
@@ -54,8 +54,8 @@ export class Workspace {
   @OneToMany(() => Workspace, (workspace) => workspace.parentWorkspace)
   branches: Workspace[];
 
-  @ManyToMany(() => User, (user) => user.workspaces)
-  users: User[];
+  @OneToMany(() => WorkspaceMembership, (membership) => membership.workspace)
+  memberships: WorkspaceMembership[];
 
   @OneToMany(() => InventoryItem, (item) => item.workspace)
   items: InventoryItem[];

@@ -3,11 +3,12 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'reac
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { api } from '../api/client';
+import { upsertLocalCustomer, setIdMapping } from '../storage/offlineStore';
 import { MaterialIcons } from '@expo/vector-icons';
 
 export default function AddCustomerScreen({ navigation }) {
   const { theme } = useTheme();
-  const { currentWorkspaceId } = useWorkspace();
+  const { currentWorkspaceId, queueAction } = useWorkspace();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -21,10 +22,32 @@ export default function AddCustomerScreen({ navigation }) {
     }
     setLoading(true);
     try {
-      await api.post(`/workspaces/${currentWorkspaceId}/customers`, { name, email, phone, address });
+      const payload = { name, email, phone, address };
+      const result = await api.post(`/workspaces/${currentWorkspaceId}/customers`, payload);
+      const localId = result?.id ? `customer_${currentWorkspaceId}_${result.id}` : `local_customer_${Date.now()}`;
+      await upsertLocalCustomer({
+        local_id: localId,
+        server_id: result?.id ? String(result.id) : null,
+        workspace_server_id: currentWorkspaceId,
+        data: { ...payload, ...(result || {}), id: result?.id ?? localId, local_id: localId },
+        sync_status: 'synced',
+      }, currentWorkspaceId);
+      if (result?.id) {
+        await setIdMapping('customer', localId, String(result.id));
+      }
       navigation.goBack();
     } catch (err) {
-      Alert.alert('Error', err.message || 'Failed to add customer');
+      if (!err?.response && queueAction) {
+        await queueAction({
+          method: 'post',
+          path: `/workspaces/${currentWorkspaceId}/customers`,
+          body: { name, email, phone, address },
+        });
+        Alert.alert('Offline', 'Customer saved locally and will sync once online');
+        navigation.goBack();
+      } else {
+        Alert.alert('Error', err.message || 'Failed to add customer');
+      }
     } finally {
       setLoading(false);
     }

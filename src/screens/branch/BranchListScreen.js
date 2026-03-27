@@ -11,6 +11,7 @@ export default function BranchListScreen({ navigation }) {
   const theme = themeContext.theme;
   const { currentWorkspaceId } = useWorkspace();
   const [branches, setBranches] = useState([]);
+  const [totals, setTotals] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const formatBranchDate = (dateValue) => {
@@ -28,10 +29,12 @@ export default function BranchListScreen({ navigation }) {
 
       setLoading(true);
       try {
-        const data = await api.get(`/workspaces/${currentWorkspaceId}/branches`);
-        setBranches(Array.isArray(data) ? data : []);
+        const data = await api.get(`/workspaces/${currentWorkspaceId}/management/overview`);
+        setBranches(Array.isArray(data?.branches) ? data.branches : []);
+        setTotals(data?.totals || null);
       } catch (err) {
         setBranches([]);
+        setTotals(null);
       } finally {
         setLoading(false);
       }
@@ -54,6 +57,13 @@ export default function BranchListScreen({ navigation }) {
           <MaterialIcons name="add" size={20} color="#fff" />
         </TouchableOpacity>
       </View>
+      {totals ? (
+        <View style={[styles.summaryStrip, { backgroundColor: theme.colors.card, borderBottomColor: theme.colors.border }]}>
+          <Text style={{ color: theme.colors.textSecondary }}>
+            Branches: {totals.branchCount} • Staff: {totals.staffCount} • Sales: ₦{Number(totals.salesAmount || 0).toLocaleString()}
+          </Text>
+        </View>
+      ) : null}
       {loading ? (
         <View style={{ padding: 12 }}>
           <SkeletonBlock height={18} width="40%" />
@@ -75,6 +85,12 @@ export default function BranchListScreen({ navigation }) {
                   {item.managerUser?.name
                     ? `Manager: ${item.managerUser.name} (${item.managerUser.email})`
                     : 'Manager: Not assigned'}
+                </Text>
+                <Text style={{ color: theme.colors.textSecondary, marginTop: 6, fontSize: 12 }}>
+                  Staff: {item.staffCount || 0} • Inventory: {item.inventoryCount || 0}
+                </Text>
+                <Text style={{ color: theme.colors.textSecondary, marginTop: 2, fontSize: 12 }}>
+                  Sales: {item.salesCount || 0} • ₦{Number(item.salesAmount || 0).toLocaleString()} • Pending debt: ₦{Number(item.pendingDebtAmount || 0).toLocaleString()}
                 </Text>
               </View>
             </Card>
@@ -104,4 +120,9 @@ const styles = StyleSheet.create({
   closeBtn: { padding: 4 },
   title: { flex: 1, fontSize: 18, fontWeight: '700', marginLeft: 10 },
   addBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  summaryStrip: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+  },
 });

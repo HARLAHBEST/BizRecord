@@ -7,10 +7,11 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
+  TouchableOpacity,
   useWindowDimensions,
-  AccessibilityInfo,
 } from 'react-native';
-import { Card, AppButton, EmptyState, SkeletonBlock } from '../../components/UI';
+import { Card, AppButton, SkeletonBlock } from '../../components/UI';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
@@ -21,15 +22,21 @@ import UpgradeModal from '../../components/UpgradeModal';
 
 export default function WorkspaceSetupScreen({ navigation }) {
   const { theme } = useTheme();
-  const { setWorkspaces, setCurrentWorkspaceId, refreshWorkspaces, repo, queueAction } = useWorkspace();
+  const { setWorkspaces, setCurrentWorkspaceId, refreshWorkspaces } = useWorkspace();
   const { logout, user } = useAuth();
   const [showRenewalModal, setShowRenewalModal] = useState(false);
+  const [pendingInvites, setPendingInvites] = useState([]);
+  const [inviteCodes, setInviteCodes] = useState({});
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [acceptingInviteId, setAcceptingInviteId] = useState(null);
+  const [activeMode, setActiveMode] = useState('create');
 
   React.useEffect(() => {
     if (user?.upgradeRequired) {
       setShowRenewalModal(true);
     }
   }, [user]);
+
   const { width } = useWindowDimensions();
   const isModal = navigation && navigation.canGoBack();
 
@@ -44,11 +51,34 @@ export default function WorkspaceSetupScreen({ navigation }) {
   const cardWidth = Math.min(width - (compact ? 24 : 36), 520);
 
   React.useEffect(() => {
-    // Simulate loading for skeleton
     setSkeleton(true);
     const timer = setTimeout(() => setSkeleton(false), 800);
     return () => clearTimeout(timer);
   }, []);
+
+  const loadPendingInvites = React.useCallback(async () => {
+    setInviteLoading(true);
+    try {
+      const invites = await api.get('/workspaces/invites/pending');
+      setPendingInvites(Array.isArray(invites) ? invites : []);
+    } catch (err) {
+      setPendingInvites([]);
+    } finally {
+      setInviteLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    loadPendingInvites();
+  }, [loadPendingInvites]);
+
+  React.useEffect(() => {
+    if (pendingInvites.length > 0) {
+      setActiveMode((prev) => (prev === 'create' ? prev : 'invite'));
+    } else {
+      setActiveMode('create');
+    }
+  }, [pendingInvites.length]);
 
   const openUpgradeModal = (payload) => {
     setUpgradePayload(payload || null);
@@ -66,7 +96,6 @@ export default function WorkspaceSetupScreen({ navigation }) {
     try {
       let online = true;
       try {
-        // Try online first
         const created = await api.post('/workspaces', {
           name: trimmedName,
           description: description.trim() || undefined,
@@ -75,18 +104,17 @@ export default function WorkspaceSetupScreen({ navigation }) {
         if (createdId) {
           setWorkspaces((prev) => {
             const exists = prev.some((item) => item.id === createdId);
-            if (exists) { return prev; }
+            if (exists) return prev;
             return [created, ...prev];
           });
           setCurrentWorkspaceId(createdId);
-          if (isModal) { navigation.goBack(); }
+          if (isModal) navigation.goBack();
           return;
         }
         await refreshWorkspaces();
-        if (isModal) { navigation.goBack(); }
+        if (isModal) navigation.goBack();
         return;
       } catch (err) {
-        // If fetch fails, treat as offline
         online = false;
         if (err?.data?.code === 'PLAN_LIMIT_REACHED') {
           openUpgradeModal(err.data);
@@ -95,7 +123,6 @@ export default function WorkspaceSetupScreen({ navigation }) {
         }
       }
 
-      // --- OFFLINE WORKSPACE CREATION ---
       if (!online) {
         const localId = `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const localWorkspace = {
@@ -120,11 +147,10 @@ export default function WorkspaceSetupScreen({ navigation }) {
             localWorkspace.sync_status,
             null,
             localWorkspace.updated_at_local,
-          ]
+          ],
         );
         setWorkspaces((prev) => [localWorkspace, ...prev]);
         setCurrentWorkspaceId(localId);
-        // Queue outbox action for sync
         await offlineStore.addSyncOutboxAction({
           action_id: `create_workspace_${localId}`,
           action_type: 'create_workspace',
@@ -145,11 +171,41 @@ export default function WorkspaceSetupScreen({ navigation }) {
         Alert.alert('Offline', 'Workspace created locally and will sync when online.', [
           { text: 'OK', onPress: () => { if (isModal) navigation.goBack(); } },
         ]);
-        return;
       }
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleAcceptInvite = async (invite) => {
+    const code = String(inviteCodes[invite.id] || '').trim();
+    if (!code) {
+      Alert.alert('Invite code required', 'Enter the invite code from your email to join this workspace.');
+      return;
+    }
+
+    setAcceptingInviteId(invite.id);
+    try {
+      await api.post('/workspaces/invites/accept', {
+        inviteId: invite.id,
+        code,
+      });
+      await refreshWorkspaces();
+      await loadPendingInvites();
+      setInviteCodes((prev) => ({ ...prev, [invite.id]: '' }));
+      Alert.alert('Invite accepted', `You have joined ${invite.workspaceName}.`);
+    } catch (err) {
+      Alert.alert('Unable to accept invite', err?.message || 'Please check the code and try again.');
+    } finally {
+      setAcceptingInviteId(null);
+    }
+  };
+
+  const formatInviteExpiry = (value) => {
+    if (!value) return 'No expiry';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'No expiry';
+    return `Expires ${date.toLocaleDateString()}`;
   };
 
   return (
@@ -173,105 +229,206 @@ export default function WorkspaceSetupScreen({ navigation }) {
         style={[styles.container, { backgroundColor: theme.colors.background }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <Card style={{ width: cardWidth }}>
-          {isModal && (
-            <TouchableOpacity
-              onPress={() => navigation.goBack()}
-              style={styles.closeButton}
-              accessibilityLabel="Close setup"
-              accessibilityRole="button"
-            >
-              <MaterialIcons name="close" size={22} color={theme.colors.textSecondary} />
-            </TouchableOpacity>
-          )}
-          <View style={styles.iconWrap}>
-            <MaterialIcons name="business" size={30} color={theme.colors.primary} />
-          </View>
-          {skeleton ? (
-            <>
-              <SkeletonBlock height={28} width={180} style={{ marginBottom: 8 }} />
-              <SkeletonBlock height={16} width={220} style={{ marginBottom: 18 }} />
-              <SkeletonBlock height={14} width={120} style={{ marginBottom: 6 }} />
-              <SkeletonBlock height={44} width={"100%"} style={{ marginBottom: 10 }} />
-              <SkeletonBlock height={14} width={120} style={{ marginBottom: 6 }} />
-              <SkeletonBlock height={44} width={"100%"} style={{ marginBottom: 18 }} />
-              <SkeletonBlock height={44} width={"100%"} style={{ marginBottom: 10 }} />
-            </>
-          ) : (
-            <>
-              <Text
-                style={[styles.title, { color: theme.colors.textPrimary, fontSize: compact ? 21 : 24 }]}
-                accessibilityRole="header"
-              >
-                Create your first workspace
-              </Text>
-              <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
-                You need at least one workspace before recording sales, inventory, and debts.
-              </Text>
-
-              <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Workspace name *</Text>
-              <TextInput
-                style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
-                placeholder="e.g. Main Store"
-                placeholderTextColor={theme.colors.textSecondary}
-                value={name}
-                onChangeText={setName}
-                accessible
-                accessibilityLabel="Workspace name"
-                accessibilityHint="Enter a name for your workspace"
-                returnKeyType="done"
-                autoFocus
-              />
-
-              <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Description (optional)</Text>
-              <TextInput
-                style={[styles.input, styles.textArea, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
-                placeholder="Small note about this workspace"
-                placeholderTextColor={theme.colors.textSecondary}
-                value={description}
-                onChangeText={setDescription}
-                multiline
-                numberOfLines={3}
-                accessible
-                accessibilityLabel="Workspace description"
-                accessibilityHint="Enter a description for your workspace"
-              />
-
-              <AppButton
-                title="Create Workspace"
-                onPress={handleCreateWorkspace}
-                loading={loading}
-                disabled={loading}
-                style={{ marginTop: 14 }}
-                accessibilityLabel="Create workspace button"
+        <ScrollView
+          style={{ width: '100%' }}
+          contentContainerStyle={{ alignItems: 'center', paddingVertical: 18 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Card style={{ width: cardWidth }}>
+            {isModal && (
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                style={styles.closeButton}
+                accessibilityLabel="Close setup"
                 accessibilityRole="button"
-              />
+              >
+                <MaterialIcons name="close" size={22} color={theme.colors.textSecondary} />
+              </TouchableOpacity>
+            )}
+            <View style={styles.iconWrap}>
+              <MaterialIcons name="business" size={30} color={theme.colors.primary} />
+            </View>
 
-              {!isModal && (
-                <AppButton
-                  title="Sign out"
-                  onPress={logout}
-                  variant="secondary"
-                  style={{ marginTop: 10 }}
-                  accessibilityLabel="Sign out button"
-                  accessibilityRole="button"
-                />
-              )}
-            </>
-          )}
-        </Card>
+            {skeleton ? (
+              <>
+                <SkeletonBlock height={28} width={180} style={{ marginBottom: 8 }} />
+                <SkeletonBlock height={16} width={220} style={{ marginBottom: 18 }} />
+                <SkeletonBlock height={14} width={120} style={{ marginBottom: 6 }} />
+                <SkeletonBlock height={44} width="100%" style={{ marginBottom: 10 }} />
+                <SkeletonBlock height={14} width={120} style={{ marginBottom: 6 }} />
+                <SkeletonBlock height={44} width="100%" style={{ marginBottom: 18 }} />
+                <SkeletonBlock height={44} width="100%" style={{ marginBottom: 10 }} />
+              </>
+            ) : (
+              <>
+                {pendingInvites.length > 0 ? (
+                  <>
+                    <Text
+                      style={[styles.title, { color: theme.colors.textPrimary, fontSize: compact ? 21 : 24 }]}
+                      accessibilityRole="header"
+                    >
+                      Get started
+                    </Text>
+                    <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
+                      Choose whether to join an invited workspace or start a new one.
+                    </Text>
+                    <View style={styles.modeRow}>
+                      <TouchableOpacity
+                        style={[
+                          styles.modeButton,
+                          {
+                            borderColor: activeMode === 'invite' ? theme.colors.primary : theme.colors.border,
+                            backgroundColor: activeMode === 'invite' ? `${theme.colors.primary}12` : theme.colors.background,
+                          },
+                        ]}
+                        onPress={() => setActiveMode('invite')}
+                      >
+                        <Text style={[styles.modeTitle, { color: theme.colors.textPrimary }]}>Accept Workspace Invite</Text>
+                        <Text style={[styles.modeSubtitle, { color: theme.colors.textSecondary }]}>
+                          Join an existing workspace with your email invite code
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.modeButton,
+                          {
+                            borderColor: activeMode === 'create' ? theme.colors.primary : theme.colors.border,
+                            backgroundColor: activeMode === 'create' ? `${theme.colors.primary}12` : theme.colors.background,
+                          },
+                        ]}
+                        onPress={() => setActiveMode('create')}
+                      >
+                        <Text style={[styles.modeTitle, { color: theme.colors.textPrimary }]}>Create New Workspace</Text>
+                        <Text style={[styles.modeSubtitle, { color: theme.colors.textSecondary }]}>
+                          Start your own workspace for a new business setup
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : null}
 
-        {/* Empty state/CTA for users with no workspaces (if needed in future) */}
-        {/*
-        {workspaces.length === 0 && !skeleton && (
-          <EmptyState
-            icon="business"
-            title="No workspaces yet"
-            subtitle="Create your first workspace to get started."
-            style={{ marginTop: 32 }}
-          />
-        )}
-        */}
+                {pendingInvites.length > 0 && activeMode === 'invite' ? (
+                  <>
+                    <Text
+                      style={[styles.title, { color: theme.colors.textPrimary, fontSize: compact ? 21 : 24 }]}
+                      accessibilityRole="header"
+                    >
+                      Accept your workspace invite
+                    </Text>
+                    <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
+                      Enter the invite code from your email to join.
+                    </Text>
+                    {pendingInvites.map((invite) => (
+                      <View
+                        key={invite.id}
+                        style={[
+                          styles.inviteCard,
+                          {
+                            borderColor: theme.colors.border,
+                            backgroundColor: theme.colors.background,
+                          },
+                        ]}
+                      >
+                        <Text style={[styles.inviteTitle, { color: theme.colors.textPrimary }]}>
+                          {invite.workspaceName}
+                        </Text>
+                        <Text style={[styles.inviteMeta, { color: theme.colors.textSecondary }]}>
+                          Role: {invite.role}
+                        </Text>
+                        <Text style={[styles.inviteMeta, { color: theme.colors.textSecondary }]}>
+                          {formatInviteExpiry(invite.expiresAt)}
+                        </Text>
+                        <TextInput
+                          style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border, marginTop: 10 }]}
+                          placeholder="Enter invite code"
+                          placeholderTextColor={theme.colors.textSecondary}
+                          value={inviteCodes[invite.id] || ''}
+                          onChangeText={(value) => setInviteCodes((prev) => ({ ...prev, [invite.id]: value }))}
+                          keyboardType="number-pad"
+                        />
+                        <AppButton
+                          title={acceptingInviteId === invite.id ? 'Accepting...' : 'Accept Invite'}
+                          onPress={() => handleAcceptInvite(invite)}
+                          loading={acceptingInviteId === invite.id}
+                          disabled={acceptingInviteId === invite.id}
+                          style={{ marginTop: 10 }}
+                        />
+                      </View>
+                    ))}
+                    <AppButton
+                      title={inviteLoading ? 'Refreshing...' : 'Refresh Invites'}
+                      onPress={loadPendingInvites}
+                      variant="secondary"
+                      loading={inviteLoading}
+                      style={{ marginTop: 8 }}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Text
+                      style={[styles.title, { color: theme.colors.textPrimary, fontSize: compact ? 21 : 24 }]}
+                      accessibilityRole="header"
+                    >
+                      {pendingInvites.length > 0 ? 'Create a new workspace' : 'Create your first workspace'}
+                    </Text>
+                    <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
+                      {pendingInvites.length > 0
+                        ? 'If this account should start a separate business workspace, create it below.'
+                        : 'You need at least one workspace before recording sales, inventory, and debts.'}
+                    </Text>
+
+                    <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Workspace name *</Text>
+                    <TextInput
+                      style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
+                      placeholder="e.g. Main Store"
+                      placeholderTextColor={theme.colors.textSecondary}
+                      value={name}
+                      onChangeText={setName}
+                      accessibilityLabel="Workspace name"
+                      accessibilityHint="Enter a name for your workspace"
+                      returnKeyType="done"
+                      autoFocus
+                    />
+
+                    <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Description (optional)</Text>
+                    <TextInput
+                      style={[styles.input, styles.textArea, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
+                      placeholder="Small note about this workspace"
+                      placeholderTextColor={theme.colors.textSecondary}
+                      value={description}
+                      onChangeText={setDescription}
+                      multiline
+                      numberOfLines={3}
+                      accessibilityLabel="Workspace description"
+                      accessibilityHint="Enter a description for your workspace"
+                    />
+
+                    <AppButton
+                      title="Create Workspace"
+                      onPress={handleCreateWorkspace}
+                      loading={loading}
+                      disabled={loading}
+                      style={{ marginTop: 14 }}
+                      accessibilityLabel="Create workspace button"
+                      accessibilityRole="button"
+                    />
+                  </>
+                )}
+
+                {!isModal && (
+                  <AppButton
+                    title="Sign out"
+                    onPress={logout}
+                    variant="secondary"
+                    style={{ marginTop: 10 }}
+                    accessibilityLabel="Sign out button"
+                    accessibilityRole="button"
+                  />
+                )}
+              </>
+            )}
+          </Card>
+        </ScrollView>
 
         <UpgradeModal
           visible={showUpgradeModal}
@@ -297,11 +454,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
-  },
-  card: {
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 18,
   },
   closeButton: {
     alignSelf: 'flex-end',
@@ -341,23 +493,41 @@ const styles = StyleSheet.create({
     minHeight: 86,
     textAlignVertical: 'top',
   },
-  primaryButton: {
-    marginTop: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
+  inviteCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
   },
-  primaryText: {
-    color: '#fff',
+  inviteTitle: {
+    fontSize: 16,
     fontWeight: '700',
+    marginBottom: 4,
   },
-  secondaryButton: {
-    marginTop: 10,
-    alignItems: 'center',
-    paddingVertical: 8,
+  inviteMeta: {
+    fontSize: 12,
+    marginTop: 2,
   },
-  secondaryText: {
-    fontWeight: '600',
+  divider: {
+    height: 1,
+    marginVertical: 16,
+  },
+  modeRow: {
+    gap: 10,
+    marginBottom: 18,
+  },
+  modeButton: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+  },
+  modeTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  modeSubtitle: {
+    fontSize: 12,
+    lineHeight: 18,
   },
 });

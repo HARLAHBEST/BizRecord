@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
@@ -11,12 +10,13 @@ import {
   StatusBar,
   useWindowDimensions,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useAuth } from '../context/AuthContext';
 import UpgradeModal from '../components/UpgradeModal';
-import { Picker } from '@react-native-picker/picker';
+import { api } from '../api/client';
 
 const SettingsScreen = function({ navigation }) {
   const themeContext = useTheme();
@@ -28,9 +28,11 @@ const SettingsScreen = function({ navigation }) {
   const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradePayload, setUpgradePayload] = useState(null);
+  const [pendingInviteCount, setPendingInviteCount] = useState(0);
 
   const currentWorkspace = workspace.workspaces.find((w) => w.id === workspace.currentWorkspaceId);
-  const userRole = user?.role || 'user';
+  const userRole = currentWorkspace?.role || user?.role || 'user';
+  const canManageWorkspace = userRole === 'owner' || userRole === 'manager';
   const normalizedPlan = user?.plan === 'pro' ? 'pro' : 'basic';
   const planLimit = normalizedPlan === 'pro' ? 3 : 1;
   const trialDaysLeft = user?.trialEndsAt
@@ -40,29 +42,6 @@ const SettingsScreen = function({ navigation }) {
   const horizontalPadding = width < 380 ? 12 : 16;
   const titleSize = width < 380 ? 24 : 28;
   const subtitleSize = width < 380 ? 14 : 16;
-  const [showTeamModal, setShowTeamModal] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState('staff');
-  const [inviteStatus, setInviteStatus] = useState(null);
-  const [teamLoading, setTeamLoading] = useState(false);
-
-        // Invite handler
-  const handleInvite = async () => {
-      setTeamLoading(true);
-        try {
-           const res = await fetch(`/workspaces/${workspace.currentWorkspaceId}/invite`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
-            });
-            const data = await res.json();
-            setInviteStatus(data.invited ? 'Invite sent!' : 'Failed');
-          } catch (err) {
-            setInviteStatus('Failed');
-          }
-          setTeamLoading(false);
-        };
-
 
   const openUpgradeModal = (feature) => {
     setUpgradePayload({
@@ -88,13 +67,29 @@ const SettingsScreen = function({ navigation }) {
     navigation.navigate('CreateWorkspace');
   };
 
-  const handleCreateBranch = () => {
-    if ((workspace.workspaces?.length || 0) >= planLimit) {
-      openUpgradeModal('branch.create');
-      return;
-    }
-    navigation.navigate('CreateBranch');
-  };
+  useFocusEffect(
+    React.useCallback(() => {
+      let active = true;
+
+      const loadPendingInvites = async () => {
+        try {
+          const invites = await api.get('/workspaces/invites/pending');
+          if (active) {
+            setPendingInviteCount(Array.isArray(invites) ? invites.length : 0);
+          }
+        } catch (err) {
+          if (active) {
+            setPendingInviteCount(0);
+          }
+        }
+      };
+
+      loadPendingInvites();
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
 
   return (
     <ScrollView
@@ -102,12 +97,12 @@ const SettingsScreen = function({ navigation }) {
       contentContainerStyle={{
         alignItems: 'center',
         paddingHorizontal: horizontalPadding,
-        paddingBottom: Platform.OS === 'web' ? 90 : 100
+        paddingBottom: Platform.OS === 'web' ? 90 : 100,
       }}
       accessibilityLabel="Settings screen"
     >
       <StatusBar barStyle="dark-content" />
-      <View style={[styles.screenHeader, { width: contentWidth, marginBottom: 8 }]}> 
+      <View style={[styles.screenHeader, { width: contentWidth, marginBottom: 8 }]}>
         <TouchableOpacity
           onPress={() => {
             if (navigation.canGoBack()) {
@@ -120,44 +115,21 @@ const SettingsScreen = function({ navigation }) {
         >
           <MaterialIcons name="arrow-back" size={20} color={theme.colors.textPrimary} />
         </TouchableOpacity>
-        <Text
-          style={[styles.screenTitle, { color: theme.colors.textPrimary, fontSize: titleSize }]}
-          accessibilityRole="header"
-        >
+        <Text style={[styles.screenTitle, { color: theme.colors.textPrimary, fontSize: titleSize }]} accessibilityRole="header">
           Settings
         </Text>
-        <Text
-          style={[styles.screenSubtitle, { color: theme.colors.textSecondary, fontSize: subtitleSize }]}
-        >
+        <Text style={[styles.screenSubtitle, { color: theme.colors.textSecondary, fontSize: subtitleSize }]}>
           Manage your app preferences
         </Text>
       </View>
 
-      <View
-        style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}
-      >
+      <View style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}>
         <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
-            <MaterialIcons
-              name="palette"
-              size={24}
-              color={theme.colors.primary}
-            />
+            <MaterialIcons name="palette" size={24} color={theme.colors.primary} />
             <View style={styles.settingText}>
-              <Text
-                style={[
-                  styles.settingTitle,
-                  { color: theme.colors.textPrimary }
-                ]}
-              >
-                Dark Mode
-              </Text>
-              <Text
-                style={[
-                  styles.settingDescription,
-                  { color: theme.colors.textSecondary }
-                ]}
-              >
+              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Dark Mode</Text>
+              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
                 Switch between light and dark theme
               </Text>
             </View>
@@ -166,10 +138,8 @@ const SettingsScreen = function({ navigation }) {
             style={[
               styles.settingToggle,
               {
-                backgroundColor: themeContext.darkMode
-                  ? theme.colors.primary
-                  : theme.colors.border
-              }
+                backgroundColor: themeContext.darkMode ? theme.colors.primary : theme.colors.border,
+              },
             ]}
             onPress={themeContext.toggleDarkMode}
           >
@@ -177,11 +147,9 @@ const SettingsScreen = function({ navigation }) {
               style={[
                 styles.toggleIndicator,
                 {
-                  transform: [
-                    { translateX: themeContext.darkMode ? 20 : 2 }
-                  ],
-                  backgroundColor: theme.colors.card
-                }
+                  transform: [{ translateX: themeContext.darkMode ? 20 : 2 }],
+                  backgroundColor: theme.colors.card,
+                },
               ]}
             />
           </TouchableOpacity>
@@ -189,26 +157,10 @@ const SettingsScreen = function({ navigation }) {
 
         <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
-            <MaterialIcons
-              name="info"
-              size={24}
-              color={theme.colors.primary}
-            />
+            <MaterialIcons name="info" size={24} color={theme.colors.primary} />
             <View style={styles.settingText}>
-              <Text
-                style={[
-                  styles.settingTitle,
-                  { color: theme.colors.textPrimary }
-                ]}
-              >
-                About BizRecord
-              </Text>
-              <Text
-                style={[
-                  styles.settingDescription,
-                  { color: theme.colors.textSecondary }
-                ]}
-              >
+              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>About BizRecord</Text>
+              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
                 Version 1.0.0 - Business records and inventory tracking
               </Text>
             </View>
@@ -216,15 +168,13 @@ const SettingsScreen = function({ navigation }) {
         </View>
       </View>
 
-      <View
-        style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}
-      >
+      <View style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}>
         <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
             <MaterialIcons name="workspace-premium" size={24} color={theme.colors.primary} />
             <View style={styles.settingText}>
               <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Current Plan</Text>
-              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}> 
+              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
                 {normalizedPlan.toUpperCase()} • {workspace.workspaces?.length || 0}/{planLimit} workspaces
                 {user?.trialStatus === 'active' ? ` • Trial: ${trialDaysLeft} day${trialDaysLeft === 1 ? '' : 's'} left` : ''}
               </Text>
@@ -235,36 +185,48 @@ const SettingsScreen = function({ navigation }) {
           </TouchableOpacity>
         </View>
 
-        {/* Switch Workspace */}
         <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
-            <MaterialIcons
-              name="business"
-              size={24}
-              color={theme.colors.primary}
-            />
+            <MaterialIcons name="business" size={24} color={theme.colors.primary} />
             <View style={styles.settingText}>
-              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>
-                Switch Workspace
-              </Text>
+              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Switch Workspace</Text>
               <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
                 {currentWorkspace?.name || 'No workspace selected'}
               </Text>
             </View>
           </View>
-          <TouchableOpacity onPress={function() { setShowWorkspaceModal(true); }}>
+          <TouchableOpacity onPress={() => setShowWorkspaceModal(true)}>
             <MaterialIcons name="swap-horiz" size={24} color={theme.colors.primary} />
           </TouchableOpacity>
         </View>
 
-        {/* Create New Workspace */}
+        <View style={styles.settingItem}>
+          <View style={styles.settingInfo}>
+            <MaterialIcons name="login" size={24} color={theme.colors.primary} />
+            <View style={styles.settingText}>
+              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Join Workspace</Text>
+              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
+                {pendingInviteCount > 0
+                  ? `${pendingInviteCount} pending invite${pendingInviteCount === 1 ? '' : 's'} waiting for you`
+                  : 'Accept a workspace invite with your email code'}
+              </Text>
+            </View>
+          </View>
+          <TouchableOpacity onPress={() => navigation.navigate('JoinWorkspace')} style={styles.joinWorkspaceAction}>
+            {pendingInviteCount > 0 ? (
+              <View style={[styles.inviteCountBadge, { backgroundColor: theme.colors.primary }]}>
+                <Text style={styles.inviteCountText}>{pendingInviteCount}</Text>
+              </View>
+            ) : null}
+            <MaterialIcons name="chevron-right" size={24} color={theme.colors.primary} />
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
             <MaterialIcons name="add-business" size={24} color={theme.colors.primary} />
             <View style={styles.settingText}>
-              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>
-                Create New Workspace
-              </Text>
+              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Create New Workspace</Text>
               <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
                 Set up a separate workspace
               </Text>
@@ -275,163 +237,68 @@ const SettingsScreen = function({ navigation }) {
           </TouchableOpacity>
         </View>
 
-
-        {/* Team Management */}
-        <View style={[styles.settingItem, { borderBottomWidth: 0 }]}> 
+        <View style={[styles.settingItem, !canManageWorkspace && styles.disabledSettingItem]}>
           <View style={styles.settingInfo}>
             <MaterialIcons name="group" size={24} color={theme.colors.primary} />
             <View style={styles.settingText}>
-              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}> 
-                Team Management
-              </Text>
-              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}> 
+              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Team Management</Text>
+              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
                 Invite and manage workspace team members
               </Text>
             </View>
           </View>
-          <TouchableOpacity onPress={() => setShowTeamModal(true)}>
+          <TouchableOpacity onPress={() => navigation.navigate('TeamManagement')} disabled={!canManageWorkspace}>
             <MaterialIcons name="group-add" size={24} color={theme.colors.primary} />
           </TouchableOpacity>
         </View>
 
-        {/* Team Management Modal */}
-        {showTeamModal && (
-          <Modal
-            visible={showTeamModal}
-            animationType="slide"
-            transparent={true}
-            onRequestClose={() => setShowTeamModal(false)}
-          >
-            <View style={styles.modalOverlay}>
-              <View style={[styles.modalContent, { backgroundColor: theme.colors.card, maxHeight: '80%' }]}>
-                <View style={styles.modalHeader}>
-                  <Text style={[styles.modalTitle, { color: theme.colors.textPrimary }]}>Team Management</Text>
-                  <TouchableOpacity onPress={() => setShowTeamModal(false)}>
-                    <MaterialIcons name="close" size={24} color={theme.colors.textSecondary} />
-                  </TouchableOpacity>
-                </View>
-                <ScrollView style={styles.modalBody}>
-                  {(currentWorkspace?.users || []).map((member) => (
-                    <View key={member.id} style={styles.workspaceItem}>
-                      <Text style={[styles.roleAssignmentUserName, { color: theme.colors.textPrimary }]}>{member.name} ({member.email})</Text>
-                      <Text style={[styles.roleAssignmentCurrentRole, { color: theme.colors.textSecondary }]}>Role: {member.role}</Text>
-                    </View>
-                  ))}
-                  <View style={{ marginTop: 24 }}>
-                    <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Invite Team Member</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-                      <TextInput
-                        style={[styles.input, { flex: 1, color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
-                        placeholder="Email"
-                        value={inviteEmail}
-                        onChangeText={setInviteEmail}
-                        autoCapitalize="none"
-                        keyboardType="email-address"
-                      />
-                      <Picker
-                        selectedValue={inviteRole}
-                        style={{ width: 120, color: theme.colors.textPrimary }}
-                        onValueChange={setInviteRole}
-                      >
-                        <Picker.Item label="Staff" value="staff" />
-                        <Picker.Item label="Manager" value="manager" />
-                        <Picker.Item label="Owner" value="owner" />
-                      </Picker>
-                      <TouchableOpacity onPress={handleInvite} disabled={teamLoading} style={{ marginLeft: 8 }}>
-                        <MaterialIcons name="send" size={24} color={theme.colors.primary} />
-                      </TouchableOpacity>
-                    </View>
-                    {inviteStatus && <Text style={{ color: theme.colors.textSecondary, marginTop: 8 }}>{inviteStatus}</Text>}
-                  </View>
-                </ScrollView>
-                <View style={styles.modalActions}>
-                  <TouchableOpacity style={[styles.modalButton, styles.updateButton, { backgroundColor: theme.colors.primary }]} onPress={() => setShowTeamModal(false)}>
-                    <Text style={styles.updateButtonText}>Done</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
+        <View style={[styles.settingItem, { borderBottomWidth: 0 }, !canManageWorkspace && styles.disabledSettingItem]}>
+          <View style={styles.settingInfo}>
+            <MaterialIcons name="account-tree" size={24} color={theme.colors.primary} />
+            <View style={styles.settingText}>
+              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Branch Management</Text>
+              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
+                View branch performance, managers and branch staffing
+              </Text>
             </View>
-          </Modal>
-        )}
+          </View>
+          <TouchableOpacity onPress={() => navigation.navigate('BranchList')} disabled={!canManageWorkspace}>
+            <MaterialIcons name="chevron-right" size={24} color={theme.colors.primary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <View
-        style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}
-      >
+      <View style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}>
         <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
-            <MaterialIcons
-              name="account-circle"
-              size={24}
-              color={theme.colors.primary}
-            />
+            <MaterialIcons name="account-circle" size={24} color={theme.colors.primary} />
             <View style={styles.settingText}>
-              <Text
-                style={[
-                  styles.settingTitle,
-                  { color: theme.colors.textPrimary }
-                ]}
-              >
-                Your Role
-              </Text>
-              <Text
-                style={[
-                  styles.settingDescription,
-                  { color: theme.colors.textSecondary }
-                ]}
-              >
-                {userRole}
-              </Text>
+              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Your Role</Text>
+              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>{userRole}</Text>
             </View>
           </View>
         </View>
       </View>
 
-      {/* Workspace Switcher Modal */}
       <Modal
         visible={showWorkspaceModal}
         animationType="slide"
-        transparent={true}
-        onRequestClose={function() {
-          setShowWorkspaceModal(false);
-        }}
+        transparent
+        onRequestClose={() => setShowWorkspaceModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <View
-            style={[
-              styles.modalContent,
-              {
-                backgroundColor: theme.colors.card,
-                maxHeight: '80%'
-              }
-            ]}
-          >
+          <View style={[styles.modalContent, { backgroundColor: theme.colors.card, maxHeight: '80%' }]}>
             <View style={styles.modalHeader}>
-              <Text
-                style={[
-                  styles.modalTitle,
-                  { color: theme.colors.textPrimary }
-                ]}
-              >
-                Switch Workspace
-              </Text>
-              <TouchableOpacity
-                onPress={function() {
-                  setShowWorkspaceModal(false);
-                }}
-              >
-                <MaterialIcons
-                  name="close"
-                  size={24}
-                  color={theme.colors.textSecondary}
-                />
+              <Text style={[styles.modalTitle, { color: theme.colors.textPrimary }]}>Switch Workspace</Text>
+              <TouchableOpacity onPress={() => setShowWorkspaceModal(false)}>
+                <MaterialIcons name="close" size={24} color={theme.colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
             <ScrollView style={styles.modalBody}>
-              {workspace.workspaces.map(function(ws) {
+              {workspace.workspaces.map((ws) => {
                 const isCurrentWorkspace = ws.id === workspace.currentWorkspaceId;
-                const roleLabel = userRole;
+                const roleLabel = ws.role || user?.role || 'user';
 
                 return (
                   <TouchableOpacity
@@ -439,41 +306,27 @@ const SettingsScreen = function({ navigation }) {
                     style={[
                       styles.workspaceItem,
                       {
-                        backgroundColor: isCurrentWorkspace ? theme.colors.primary + '20' : 'transparent',
-                        borderColor: isCurrentWorkspace ? theme.colors.primary : theme.colors.border
-                      }
+                        backgroundColor: isCurrentWorkspace ? `${theme.colors.primary}20` : 'transparent',
+                        borderColor: isCurrentWorkspace ? theme.colors.primary : theme.colors.border,
+                      },
                     ]}
-                    onPress={function() {
+                    onPress={() => {
                       workspace.setCurrentWorkspaceId(ws.id);
                       setShowWorkspaceModal(false);
                     }}
                   >
                     <View style={{ flex: 1 }}>
-                      <Text
-                        style={[
-                          styles.roleAssignmentUserName,
-                          { color: theme.colors.textPrimary }
-                        ]}
-                      >
+                      <Text style={[styles.roleAssignmentUserName, { color: theme.colors.textPrimary }]}>
                         {ws.name}
                         {isCurrentWorkspace ? ' ✓' : ''}
                       </Text>
-                      <Text
-                        style={[
-                          styles.roleAssignmentCurrentRole,
-                          { color: theme.colors.textSecondary }
-                        ]}
-                      >
+                      <Text style={[styles.roleAssignmentCurrentRole, { color: theme.colors.textSecondary }]}>
                         Role: {roleLabel}
                       </Text>
                     </View>
-                    {isCurrentWorkspace && (
-                      <MaterialIcons
-                        name="check-circle"
-                        size={20}
-                        color={theme.colors.primary}
-                      />
-                    )}
+                    {isCurrentWorkspace ? (
+                      <MaterialIcons name="check-circle" size={20} color={theme.colors.primary} />
+                    ) : null}
                   </TouchableOpacity>
                 );
               })}
@@ -481,14 +334,8 @@ const SettingsScreen = function({ navigation }) {
 
             <View style={styles.modalActions}>
               <TouchableOpacity
-                style={[
-                  styles.modalButton,
-                  styles.updateButton,
-                  { backgroundColor: theme.colors.primary }
-                ]}
-                onPress={function() {
-                  setShowWorkspaceModal(false);
-                }}
+                style={[styles.modalButton, styles.updateButton, { backgroundColor: theme.colors.primary }]}
+                onPress={() => setShowWorkspaceModal(false)}
               >
                 <Text style={styles.updateButtonText}>Done</Text>
               </TouchableOpacity>
@@ -497,15 +344,15 @@ const SettingsScreen = function({ navigation }) {
         </View>
       </Modal>
 
-      <View
-        style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}
-      >
+      <View style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}>
         <View style={[styles.settingItem, { borderBottomWidth: 0 }]}>
           <View style={styles.settingInfo}>
             <MaterialIcons name="payments" size={24} color={theme.colors.primary} />
             <View style={styles.settingText}>
               <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Subscription & Billing</Text>
-              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>Manage plan, add-ons and usage</Text>
+              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
+                Manage plan, add-ons and usage
+              </Text>
             </View>
           </View>
           <TouchableOpacity onPress={() => navigation.navigate('Subscription')}>
@@ -514,13 +361,8 @@ const SettingsScreen = function({ navigation }) {
         </View>
       </View>
 
-      <View
-        style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}
-      >
-        <TouchableOpacity
-          style={styles.logoutButton}
-          onPress={logout}
-        >
+      <View style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}>
+        <TouchableOpacity style={styles.logoutButton} onPress={logout}>
           <Text style={[styles.logoutText, { color: theme.colors.primary }]}>Sign out</Text>
         </TouchableOpacity>
       </View>
@@ -538,7 +380,6 @@ const SettingsScreen = function({ navigation }) {
         limit={upgradePayload?.meta?.limit || planLimit}
         current={upgradePayload?.meta?.current || (workspace.workspaces?.length || 0)}
       />
-
     </ScrollView>
   );
 };
@@ -546,12 +387,12 @@ const SettingsScreen = function({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    width: '100%'
+    width: '100%',
   },
   screenHeader: {
     paddingHorizontal: 4,
     paddingTop: 20,
-    paddingBottom: 12
+    paddingBottom: 12,
   },
   backButton: {
     width: 34,
@@ -565,10 +406,10 @@ const styles = StyleSheet.create({
   screenTitle: {
     fontSize: 28,
     fontWeight: 'bold',
-    marginBottom: 4
+    marginBottom: 4,
   },
   screenSubtitle: {
-    fontSize: 16
+    fontSize: 16,
   },
   settingsCard: {
     marginTop: 12,
@@ -587,43 +428,46 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6'
+    borderBottomColor: '#F3F4F6',
+  },
+  disabledSettingItem: {
+    opacity: 0.55,
   },
   settingInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1
+    flex: 1,
   },
   settingText: {
     marginLeft: 16,
-    flex: 1
+    flex: 1,
   },
   settingTitle: {
     fontSize: 16,
     fontWeight: '600',
-    marginBottom: 2
+    marginBottom: 2,
   },
   settingDescription: {
-    fontSize: 14
+    fontSize: 14,
   },
   settingToggle: {
     width: 44,
     height: 24,
     borderRadius: 12,
     padding: 2,
-    justifyContent: 'center'
+    justifyContent: 'center',
   },
   toggleIndicator: {
     width: 20,
     height: 20,
-    borderRadius: 10
+    borderRadius: 10,
   },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20
+    padding: 20,
   },
   modalContent: {
     width: '100%',
@@ -634,78 +478,55 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
-    elevation: 5
+    elevation: 5,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20
+    marginBottom: 20,
   },
   modalTitle: {
     fontSize: 20,
-    fontWeight: '600'
+    fontWeight: '600',
   },
   modalBody: {
-    marginBottom: 24
+    marginBottom: 24,
   },
   modalActions: {
     flexDirection: 'row',
-    justifyContent: 'space-between'
+    justifyContent: 'space-between',
   },
   modalButton: {
     flex: 1,
     paddingVertical: 12,
     borderRadius: 8,
-    alignItems: 'center'
+    alignItems: 'center',
   },
   updateButton: {
-    marginLeft: 8
+    marginLeft: 8,
   },
   updateButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#FFFFFF'
-  },
-  roleAssignmentItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 0,
-    marginVertical: 8,
-    borderBottomWidth: 1
+    color: '#FFFFFF',
   },
   roleAssignmentUserName: {
     fontSize: 14,
     fontWeight: '600',
-    marginBottom: 4
+    marginBottom: 4,
   },
   roleAssignmentCurrentRole: {
-    fontSize: 12
-  },
-  roleAssignmentActions: {
-    flexDirection: 'row',
-    marginLeft: 12
-  },
-  roleButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    marginHorizontal: 4
-  },
-  roleButtonText: {
     fontSize: 12,
-    fontWeight: '600'
   },
   logoutButton: {
     paddingVertical: 16,
     alignItems: 'center',
-    borderRadius: 12
+    borderRadius: 12,
   },
   logoutText: {
     fontSize: 16,
-    fontWeight: '600'
+    fontWeight: '600',
   },
   workspaceItem: {
     flexDirection: 'row',
@@ -715,9 +536,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     marginVertical: 8,
     borderRadius: 8,
-    borderWidth: 1
-  }
+    borderWidth: 1,
+  },
+  joinWorkspaceAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  inviteCountBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+    marginRight: 8,
+  },
+  inviteCountText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
 });
 
 export default SettingsScreen;
- 

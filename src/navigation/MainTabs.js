@@ -17,7 +17,9 @@ import RecordDebtScreen from '../screens/RecordDebtScreen';
 import BranchCreateScreen from '../screens/branch/BranchCreateScreen';
 import BranchListScreen from '../screens/branch/BranchListScreen';
 import WorkspaceSetupScreen from '../screens/workspace/WorkspaceSetupScreen';
+import WorkspaceInvitesScreen from '../screens/workspace/WorkspaceInvitesScreen';
 import SubscriptionScreen from '../screens/billing/SubscriptionScreen';
+import TeamManagementScreen from '../screens/TeamManagementScreen';
 import { useTheme } from '../theme/ThemeContext';
 import { MaterialIcons } from '@expo/vector-icons';
 
@@ -126,7 +128,9 @@ export default function MainTabs() {
       <Stack.Screen name="RecordDebt" component={RecordDebtScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="CreateBranch" component={BranchCreateScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="BranchList" component={BranchListScreen} options={{ presentation: 'modal' }} />
+      <Stack.Screen name="TeamManagement" component={TeamManagementScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="CreateWorkspace" component={WorkspaceSetupScreen} options={{ presentation: 'modal' }} />
+      <Stack.Screen name="JoinWorkspace" component={WorkspaceInvitesScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="Subscription" component={SubscriptionScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="EditItem" component={EditItemScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="Settings" component={SettingsScreen} options={{ presentation: 'modal' }} />

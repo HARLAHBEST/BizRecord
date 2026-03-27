@@ -90,6 +90,17 @@ export async function initDb() {
       updated_at_local INTEGER
     );
 
+    CREATE TABLE IF NOT EXISTS local_customers (
+      local_id TEXT PRIMARY KEY,
+      server_id TEXT,
+      workspace_local_id TEXT,
+      workspace_server_id TEXT,
+      data TEXT,
+      sync_status TEXT,
+      last_error TEXT,
+      updated_at_local INTEGER
+    );
+
     -- Structured outbox for sync actions
     CREATE TABLE IF NOT EXISTS sync_outbox (
       action_id TEXT PRIMARY KEY,
@@ -118,6 +129,7 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_local_inventory_workspace ON local_inventory(workspace_local_id);
     CREATE INDEX IF NOT EXISTS idx_local_transactions_workspace ON local_transactions(workspace_local_id);
     CREATE INDEX IF NOT EXISTS idx_local_debts_workspace ON local_debts(workspace_local_id);
+    CREATE INDEX IF NOT EXISTS idx_local_customers_workspace ON local_customers(workspace_local_id);
     CREATE INDEX IF NOT EXISTS idx_sync_outbox_status_next_retry ON sync_outbox(depends_on_action_id, next_retry_at);
     CREATE INDEX IF NOT EXISTS idx_id_mapping_entity_local ON id_mapping(entity_type, local_id);
   `);

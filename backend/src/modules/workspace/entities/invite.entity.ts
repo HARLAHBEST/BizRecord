@@ -20,10 +20,19 @@ export class WorkspaceInvite {
   workspaceId: string;
 
   @Column({ default: 'pending' })
-  status: 'pending' | 'accepted' | 'declined';
+  status: 'pending' | 'accepted' | 'declined' | 'expired';
 
   @Column({ nullable: true })
   role: string;
+
+  @Column({ name: 'invite_code', nullable: true })
+  inviteCode: string | null;
+
+  @Column({ name: 'expires_at', type: 'timestamp', nullable: true })
+  expiresAt: Date | null;
+
+  @Column({ name: 'accepted_at', type: 'timestamp', nullable: true })
+  acceptedAt: Date | null;
 
   @CreateDateColumn()
   createdAt: Date;

@@ -4,10 +4,10 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
-  ManyToMany,
-  JoinTable,
+  OneToMany,
 } from 'typeorm';
 import { Workspace } from '../../workspace/entities/workspace.entity';
+import { WorkspaceMembership } from '../../workspace/entities/workspace-membership.entity';
 
 @Entity('users')
 export class User {
@@ -65,13 +65,8 @@ export class User {
   @Column({ type: 'timestamp', nullable: true })
   passwordResetLastSentAt: Date | null;
 
-  @ManyToMany(() => Workspace, (workspace) => workspace.users)
-  @JoinTable({
-    name: 'workspace_users',
-    joinColumn: { name: 'user_id', referencedColumnName: 'id' },
-    inverseJoinColumn: { name: 'workspace_id', referencedColumnName: 'id' },
-  })
-  workspaces: Workspace[];
+  @OneToMany(() => WorkspaceMembership, (membership) => membership.user)
+  memberships: WorkspaceMembership[];
 
   @CreateDateColumn()
   createdAt: Date;

@@ -4,11 +4,12 @@ import { SkeletonBlock } from '../components/UI';
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { api } from '../api/client';
+import { upsertLocalCustomer } from '../storage/offlineStore';
 import { MaterialIcons } from '@expo/vector-icons';
 
 export default function EditCustomerScreen({ route, navigation }) {
   const { theme } = useTheme();
-  const { currentWorkspaceId } = useWorkspace();
+  const { currentWorkspaceId, queueAction } = useWorkspace();
   const customer = route?.params?.customer;
   const [name, setName] = useState(customer?.name || '');
   const [email, setEmail] = useState(customer?.email || '');
@@ -23,10 +24,28 @@ export default function EditCustomerScreen({ route, navigation }) {
     }
     setLoading(true);
     try {
-      await api.put(`/workspaces/${currentWorkspaceId}/customers/${customer.id}`, { name, email, phone, address });
+      const payload = { name, email, phone, address };
+      await api.put(`/workspaces/${currentWorkspaceId}/customers/${customer.id}`, payload);
+      await upsertLocalCustomer({
+        local_id: customer.local_id || customer.id,
+        server_id: String(customer.id),
+        workspace_server_id: currentWorkspaceId,
+        data: { ...customer, ...payload, id: customer.id, local_id: customer.local_id || customer.id },
+        sync_status: 'synced',
+      }, currentWorkspaceId);
       navigation.goBack();
     } catch (err) {
-      Alert.alert('Error', err.message || 'Failed to update customer');
+      if (!err?.response && queueAction) {
+        await queueAction({
+          method: 'put',
+          path: `/workspaces/${currentWorkspaceId}/customers/${customer.id}`,
+          body: { name, email, phone, address },
+        });
+        Alert.alert('Offline', 'Customer update saved locally and will sync once online');
+        navigation.goBack();
+      } else {
+        Alert.alert('Error', err.message || 'Failed to update customer');
+      }
     } finally {
       setLoading(false);
     }

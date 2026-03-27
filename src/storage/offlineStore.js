@@ -15,12 +15,18 @@ const localWorkspaceId = (workspaceId) => (workspaceId == null ? '' : String(wor
 
 const resolveWorkspaceIdFromRow = (row) => row.server_id || row.local_id;
 
+const entityTableMap = {
+  inventory: 'local_inventory',
+  transaction: 'local_transactions',
+  debt: 'local_debts',
+  customer: 'local_customers',
+};
+
+const getEntityTable = (entityType) => entityTableMap[entityType] || null;
+
 // Mark a row and outbox action as conflict
 export async function markConflict(entityType, localId, actionId) {
-  let table = null;
-  if (entityType === 'inventory') table = 'local_inventory';
-  if (entityType === 'transaction') table = 'local_transactions';
-  if (entityType === 'debt') table = 'local_debts';
+  const table = getEntityTable(entityType);
   if (!table) return;
   await executeSql(`UPDATE ${table} SET sync_status = 'conflict' WHERE local_id = ?`, [localId]);
   await executeSql('UPDATE sync_outbox SET last_error = ?, sync_status = ? WHERE action_id = ?', ['conflict', 'conflict', actionId]);
@@ -28,14 +34,33 @@ export async function markConflict(entityType, localId, actionId) {
 
 // Get a local row by entity type and localId
 export async function getLocalRow(entityType, localId) {
-  let table = null;
-  if (entityType === 'inventory') table = 'local_inventory';
-  if (entityType === 'transaction') table = 'local_transactions';
-  if (entityType === 'debt') table = 'local_debts';
+  const table = getEntityTable(entityType);
   if (!table) return null;
   const res = await executeSql(`SELECT * FROM ${table} WHERE local_id = ?`, [localId]);
   if (res.rows.length > 0) return res.rows.item(0);
   return null;
+}
+
+export async function getLocalIdByServerId(entityType, serverId, workspaceId) {
+  const table = getEntityTable(entityType);
+  if (!table || !serverId) return null;
+  const workspaceRef = localWorkspaceId(workspaceId);
+  const res = workspaceRef
+    ? await executeSql(
+        `SELECT local_id FROM ${table} WHERE server_id = ? AND (workspace_local_id = ? OR workspace_server_id = ?) LIMIT 1`,
+        [String(serverId), workspaceRef, workspaceRef]
+      )
+    : await executeSql(`SELECT local_id FROM ${table} WHERE server_id = ? LIMIT 1`, [String(serverId)]);
+  return res.rows.length > 0 ? res.rows.item(0).local_id : null;
+}
+
+export async function markLocalEntityStatus(entityType, localId, syncStatus, lastError = null) {
+  const table = getEntityTable(entityType);
+  if (!table || !localId) return;
+  await executeSql(
+    `UPDATE ${table} SET sync_status = ?, last_error = ?, updated_at_local = ? WHERE local_id = ?`,
+    [syncStatus, lastError, Date.now(), localId]
+  );
 }
 
 // --- Workspace-isolated local tables ---
@@ -90,6 +115,14 @@ export async function getLocalDebts(workspaceLocalId) {
   if (!workspaceLocalId) throw new Error('workspaceLocalId required');
   return executeSql(
     'SELECT * FROM local_debts WHERE workspace_local_id = ? OR workspace_server_id = ?',
+    [workspaceLocalId, workspaceLocalId]
+  );
+}
+
+export async function getLocalCustomers(workspaceLocalId) {
+  if (!workspaceLocalId) throw new Error('workspaceLocalId required');
+  return executeSql(
+    'SELECT * FROM local_customers WHERE workspace_local_id = ? OR workspace_server_id = ?',
     [workspaceLocalId, workspaceLocalId]
   );
 }
@@ -149,6 +182,24 @@ export async function upsertLocalDebt(item, workspaceLocalId) {
   );
 }
 
+export async function upsertLocalCustomer(item, workspaceLocalId) {
+  if (!workspaceLocalId) throw new Error('workspaceLocalId required');
+  return executeSql(
+    `INSERT OR REPLACE INTO local_customers (local_id, server_id, workspace_local_id, workspace_server_id, data, sync_status, last_error, updated_at_local)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      item.local_id,
+      item.server_id || null,
+      workspaceLocalId,
+      item.workspace_server_id || workspaceLocalId,
+      JSON.stringify(item.data),
+      item.sync_status || 'pending_create',
+      item.last_error || null,
+      item.updated_at_local || Date.now(),
+    ]
+  );
+}
+
 export async function deleteLocalInventory(localId, workspaceLocalId) {
   if (!workspaceLocalId) throw new Error('workspaceLocalId required');
   return executeSql('DELETE FROM local_inventory WHERE local_id = ? AND (workspace_local_id = ? OR workspace_server_id = ?)', [localId, workspaceLocalId, workspaceLocalId]);
@@ -162,6 +213,11 @@ export async function deleteLocalTransaction(localId, workspaceLocalId) {
 export async function deleteLocalDebt(localId, workspaceLocalId) {
   if (!workspaceLocalId) throw new Error('workspaceLocalId required');
   return executeSql('DELETE FROM local_debts WHERE local_id = ? AND (workspace_local_id = ? OR workspace_server_id = ?)', [localId, workspaceLocalId, workspaceLocalId]);
+}
+
+export async function deleteLocalCustomer(localId, workspaceLocalId) {
+  if (!workspaceLocalId) throw new Error('workspaceLocalId required');
+  return executeSql('DELETE FROM local_customers WHERE local_id = ? AND (workspace_local_id = ? OR workspace_server_id = ?)', [localId, workspaceLocalId, workspaceLocalId]);
 }
 
 // --- Structured outbox ---
@@ -212,7 +268,10 @@ export async function cacheInventory(workspaceId, items) {
     const workspaceRef = localWorkspaceId(workspaceId);
     const list = Array.isArray(items) ? items : [];
 
-    await executeSql('DELETE FROM local_inventory WHERE workspace_local_id = ? OR workspace_server_id = ?', [workspaceRef, workspaceRef]);
+    await executeSql(
+      "DELETE FROM local_inventory WHERE (workspace_local_id = ? OR workspace_server_id = ?) AND COALESCE(sync_status, 'synced') = 'synced'",
+      [workspaceRef, workspaceRef]
+    );
 
     for (const item of list) {
       const serverId = item?.id != null ? String(item.id) : null;
@@ -262,7 +321,10 @@ export async function cacheDebts(workspaceId, debts) {
     const workspaceRef = localWorkspaceId(workspaceId);
     const list = Array.isArray(debts) ? debts : [];
 
-    await executeSql('DELETE FROM local_debts WHERE workspace_local_id = ? OR workspace_server_id = ?', [workspaceRef, workspaceRef]);
+    await executeSql(
+      "DELETE FROM local_debts WHERE (workspace_local_id = ? OR workspace_server_id = ?) AND COALESCE(sync_status, 'synced') = 'synced'",
+      [workspaceRef, workspaceRef]
+    );
 
     for (const item of list) {
       const serverId = item?.id != null ? String(item.id) : null;
@@ -336,6 +398,40 @@ export async function cacheTransactions(workspaceId, type, transactions) {
   }
 }
 
+export async function cacheCustomers(workspaceId, customers) {
+  try {
+    const now = Date.now();
+    const workspaceRef = localWorkspaceId(workspaceId);
+    const list = Array.isArray(customers) ? customers : [];
+
+    await executeSql(
+      "DELETE FROM local_customers WHERE (workspace_local_id = ? OR workspace_server_id = ?) AND COALESCE(sync_status, 'synced') = 'synced'",
+      [workspaceRef, workspaceRef]
+    );
+
+    for (const item of list) {
+      const serverId = item?.id != null ? String(item.id) : null;
+      const localId = item?.local_id || (serverId ? `customer_${workspaceRef}_${serverId}` : `customer_${workspaceRef}_${now}_${Math.random().toString(16).slice(2)}`);
+      await executeSql(
+        `INSERT OR REPLACE INTO local_customers (local_id, server_id, workspace_local_id, workspace_server_id, data, sync_status, last_error, updated_at_local)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          localId,
+          serverId,
+          workspaceRef,
+          workspaceRef,
+          JSON.stringify(item),
+          'synced',
+          null,
+          now,
+        ]
+      );
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export async function getCachedTransactions(workspaceId, type) {
   try {
     const workspaceRef = localWorkspaceId(workspaceId);
@@ -353,6 +449,37 @@ export async function getCachedTransactions(workspaceId, type) {
         continue;
       }
       results.push({ ...data, id: data.id ?? row.server_id ?? row.local_id, local_id: row.local_id, sync_status: row.sync_status });
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+export async function getCachedCustomers(workspaceId, search) {
+  try {
+    const workspaceRef = localWorkspaceId(workspaceId);
+    const rows = await executeSql(
+      'SELECT * FROM local_customers WHERE workspace_local_id = ? OR workspace_server_id = ? ORDER BY updated_at_local DESC',
+      [workspaceRef, workspaceRef]
+    );
+    const normalizedSearch = search ? String(search).trim().toLowerCase() : '';
+    const results = [];
+    for (let i = 0; i < rows.rows.length; i += 1) {
+      const row = rows.rows.item(i);
+      const data = parseRowData(row);
+      const customer = { ...data, id: data.id ?? row.server_id ?? row.local_id, local_id: row.local_id, sync_status: row.sync_status };
+      if (!normalizedSearch) {
+        results.push(customer);
+        continue;
+      }
+      const haystack = [customer.name, customer.email, customer.phone, customer.address]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      if (haystack.includes(normalizedSearch)) {
+        results.push(customer);
+      }
     }
     return results;
   } catch {

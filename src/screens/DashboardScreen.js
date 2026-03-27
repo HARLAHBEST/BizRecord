@@ -33,6 +33,7 @@ export default function DashboardScreen({ navigation }) {
   const [activityError, setActivityError] = React.useState(null);
   const [inventoryItems, setInventoryItems] = React.useState([]);
   const [refreshTick, setRefreshTick] = React.useState(0);
+  const [pendingInviteCount, setPendingInviteCount] = React.useState(0);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -100,6 +101,19 @@ export default function DashboardScreen({ navigation }) {
     loadInventory();
   }, [workspace.currentWorkspaceId, refreshTick]);
 
+  React.useEffect(() => {
+    const loadPendingInvites = async () => {
+      try {
+        const invites = await api.get('/workspaces/invites/pending');
+        setPendingInviteCount(Array.isArray(invites) ? invites.length : 0);
+      } catch (err) {
+        setPendingInviteCount(0);
+      }
+    };
+
+    loadPendingInvites();
+  }, [refreshTick]);
+
   const currentWorkspace = workspace.workspaces.find((w) => w.id === workspace.currentWorkspaceId);
   const currentHour = new Date().getHours();
   const greeting = currentHour < 12 ? 'Good morning' : currentHour < 17 ? 'Good afternoon' : 'Good evening';
@@ -160,6 +174,24 @@ export default function DashboardScreen({ navigation }) {
               </Text>
             </TouchableOpacity>
           </View>
+
+          {pendingInviteCount > 0 ? (
+            <Card style={[styles.inviteBanner, { borderColor: `${theme.colors.primary}35`, backgroundColor: theme.colors.card }]}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', marginBottom: 4 }}>
+                  You have {pendingInviteCount} pending workspace invite{pendingInviteCount === 1 ? '' : 's'}
+                </Text>
+                <Subtle>Review and accept them to join another workspace.</Subtle>
+              </View>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('JoinWorkspace')}
+                style={[styles.inviteBannerButton, { backgroundColor: theme.colors.primary }]}
+                activeOpacity={0.8}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Review</Text>
+              </TouchableOpacity>
+            </Card>
+          ) : null}
 
           {/* Inventory Stats Card with Skeleton */}
           <Card style={[styles.heroCard, { padding: compact ? 12 : 14, borderColor: theme.colors.primary + '22' }]}> 
@@ -287,6 +319,17 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 8,
     elevation: 2,
+  },
+  inviteBanner: {
+    marginBottom: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  inviteBannerButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
   },
   workspaceBadge: { 
     flexShrink: 1,

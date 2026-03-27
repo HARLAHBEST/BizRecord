@@ -221,7 +221,6 @@ export class BillingService {
   async getCurrentSubscription(userId: string) {
     const user = await this.usersRepository.findOne({
       where: { id: userId },
-      relations: ['workspaces'],
     });
 
     if (!user) {
@@ -241,6 +240,9 @@ export class BillingService {
 
     const effectiveAddOns = isTrialing ? { workspaceSlots: 0, staffSeats: 0, whatsappBundles: 0 } : addOns;
     const limits = this.computeLimits(normalizedPlan, effectiveAddOns);
+    const ownedWorkspaceCount = await this.workspacesRepository.count({
+      where: { createdBy: { id: userId } },
+    });
 
     return {
       status: isTrialing ? 'trialing' : isTrialExpired ? 'expired' : 'active',
@@ -256,7 +258,7 @@ export class BillingService {
       addOns: effectiveAddOns,
       limits: {
         ...limits,
-        workspaceUsed: user.workspaces?.length || 0,
+        workspaceUsed: ownedWorkspaceCount,
       },
       billing: {
         subscriptionId: subscription.id,

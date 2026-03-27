@@ -13,7 +13,15 @@ import {
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { api } from '../api/client';
-import { cacheInventory, getCachedInventory, upsertLocalTransaction, addSyncOutboxAction } from '../storage/offlineStore';
+import {
+  cacheCustomers,
+  cacheInventory,
+  getCachedCustomers,
+  getCachedInventory,
+  setIdMapping,
+  upsertLocalTransaction,
+  addSyncOutboxAction,
+} from '../storage/offlineStore';
 import { Card, Title, SkeletonBlock, EmptyState } from '../components/UI';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useCustomerSelect } from '../context/CustomerSelectContext';
@@ -46,9 +54,12 @@ export default function RecordSaleScreen({ navigation, route }) {
         }
         try {
           const data = await api.get(`/workspaces/${currentWorkspaceId}/customers`);
-          setCustomers(Array.isArray(data) ? data : []);
+          const list = Array.isArray(data) ? data : [];
+          setCustomers(list);
+          cacheCustomers(currentWorkspaceId, list).catch(() => null);
         } catch {
-          setCustomers([]);
+          const cached = await getCachedCustomers(currentWorkspaceId);
+          setCustomers(Array.isArray(cached) ? cached : []);
         }
       };
       loadCustomers();
@@ -94,9 +105,12 @@ export default function RecordSaleScreen({ navigation, route }) {
         local_id: localId,
         server_id: result?.id ? String(result.id) : null,
         workspace_server_id: currentWorkspaceId,
-        data: { ...payload, id: result?.id ?? localId },
+        data: { ...payload, ...(result || {}), id: result?.id ?? localId, local_id: localId },
         sync_status: 'synced',
       }, currentWorkspaceId).catch(() => null);
+      if (result?.id) {
+        setIdMapping('transaction', localId, String(result.id)).catch(() => null);
+      }
     } catch (err) {
       const isOffline = !err?.response;
       if (isOffline) {
