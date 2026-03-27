@@ -2,6 +2,8 @@ import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { DataSource, DataSourceOptions } from 'typeorm';
 import { User } from '../modules/auth/entities/user.entity';
 import { Workspace } from '../modules/workspace/entities/workspace.entity';
+import { WorkspaceInvite } from '../modules/workspace/entities/invite.entity';
+import { WorkspaceMembership } from '../modules/workspace/entities/workspace-membership.entity';
 import { InventoryItem } from '../modules/inventory/entities/inventory-item.entity';
 import { Transaction } from '../modules/transactions/entities/transaction.entity';
 import { Subscription } from '../modules/billing/entities/subscription.entity';
@@ -26,7 +28,17 @@ export const databaseConfig = (): TypeOrmModuleOptions => {
   const ssl = buildSslOption();
   const shared = {
     type: 'postgres' as const,
-    entities: [User, Workspace, InventoryItem, Transaction, Subscription, Payment, Customer],
+    entities: [
+      User,
+      Workspace,
+      WorkspaceInvite,
+      WorkspaceMembership,
+      InventoryItem,
+      Transaction,
+      Subscription,
+      Payment,
+      Customer,
+    ],
     synchronize: process.env.NODE_ENV !== 'production',
     migrations: [__dirname + '/../database/migrations/*{.ts,.js}'],
     migrationsRun: true,
@@ -51,7 +63,17 @@ export const databaseConfig = (): TypeOrmModuleOptions => {
 // DataSource for TypeORM CLI migrations.
 // Environment variables are read once when this module is loaded (standard
 // Node.js/NestJS behaviour – env vars do not change at runtime).
-const entities = [User, Workspace, InventoryItem, Transaction, Subscription, Payment, Customer];
+const entities = [
+  User,
+  Workspace,
+  WorkspaceInvite,
+  WorkspaceMembership,
+  InventoryItem,
+  Transaction,
+  Subscription,
+  Payment,
+  Customer,
+];
 const migrations = [__dirname + '/../database/migrations/*{.ts,.js}'];
 const ssl = buildSslOption();
 
