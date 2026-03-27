@@ -23,7 +23,76 @@ export default function RecordDebtScreen({ navigation }) {
 
   const [customerId, setCustomerId] = useState('');
   const [customers, setCustomers] = useState([]);
-    if (loading) {
+  const [phone, setPhone] = useState('');
+  const [amount, setAmount] = useState('');
+  const [dueInDays, setDueInDays] = useState('7');
+  const [notes, setNotes] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const loadCustomers = async () => {
+      if (!currentWorkspaceId) {
+        setCustomers([]);
+        return;
+      }
+      try {
+        const data = await api.get(`/workspaces/${currentWorkspaceId}/customers`);
+        setCustomers(Array.isArray(data) ? data : []);
+      } catch {
+        setCustomers([]);
+      }
+    };
+    loadCustomers();
+  }, [currentWorkspaceId]);
+
+  const handleSubmit = async () => {
+    if (!currentWorkspaceId) {
+      Alert.alert('Workspace required', 'Please select a workspace first');
+      return;
+    }
+    if (!amount || parseFloat(amount) <= 0) {
+      Alert.alert('Validation Error', 'Please enter a valid amount');
+      return;
+    }
+    const dueDate = dueInDays
+      ? new Date(Date.now() + parseInt(dueInDays, 10) * 86400000).toISOString()
+      : null;
+    const payload = {
+      type: 'debt',
+      totalAmount: parseFloat(amount),
+      phone: phone || undefined,
+      dueDate: dueDate || undefined,
+      notes: notes || undefined,
+      customerId: customerId || undefined,
+      customerName: customers.find((c) => c.id === customerId)?.name || undefined,
+      status: 'pending',
+    };
+
+    setLoading(true);
+    try {
+      await api.post(`/workspaces/${currentWorkspaceId}/transactions`, payload);
+      Alert.alert('Success', 'Debt recorded', [
+        { text: 'OK', onPress: () => navigation.goBack() },
+      ]);
+    } catch (err) {
+      if (queueAction) {
+        await queueAction({
+          method: 'post',
+          path: `/workspaces/${currentWorkspaceId}/transactions`,
+          body: payload,
+        });
+        Alert.alert('Offline', 'Debt queued and will sync once online', [
+          { text: 'OK', onPress: () => navigation.goBack() },
+        ]);
+      } else {
+        Alert.alert('Error', err?.message || 'Unable to record debt');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
       return (
         <View style={{ flex: 1, backgroundColor: theme.colors.background, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
           <SkeletonBlock height={28} width="60%" style={{ marginBottom: 18, borderRadius: 8 }} />

@@ -13,7 +13,7 @@ import {
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { api } from '../api/client';
-import { cacheInventory, getCachedInventory } from '../storage/offlineStore';
+import { cacheInventory, getCachedInventory, upsertLocalTransaction, addSyncOutboxAction } from '../storage/offlineStore';
 import { Card, Title, SkeletonBlock, EmptyState } from '../components/UI';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useCustomerSelect } from '../context/CustomerSelectContext';
@@ -86,14 +86,35 @@ export default function RecordSaleScreen({ navigation, route }) {
   }, [currentWorkspaceId]);
 
   const postTransaction = async (payload) => {
+    const localId = `local_tx_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     try {
-      await api.post(`/workspaces/${currentWorkspaceId}/transactions`, payload);
+      const result = await api.post(`/workspaces/${currentWorkspaceId}/transactions`, payload);
+      // Upsert into local SQLite so SalesScreen reflects the new transaction immediately
+      upsertLocalTransaction({
+        local_id: localId,
+        server_id: result?.id ? String(result.id) : null,
+        workspace_server_id: currentWorkspaceId,
+        data: { ...payload, id: result?.id ?? localId },
+        sync_status: 'synced',
+      }, currentWorkspaceId).catch(() => null);
     } catch (err) {
-      if (queueAction) {
-        await queueAction({
-          method: 'post',
-          path: `/workspaces/${currentWorkspaceId}/transactions`,
-          body: payload,
+      const isOffline = !err?.response;
+      if (isOffline) {
+        // Write to local SQLite immediately so the sale appears while offline
+        await upsertLocalTransaction({
+          local_id: localId,
+          server_id: null,
+          workspace_server_id: currentWorkspaceId,
+          data: { ...payload, local_id: localId },
+          sync_status: 'pending_create',
+        }, currentWorkspaceId);
+        await addSyncOutboxAction({
+          action_id: localId,
+          action_type: 'create_transaction',
+          entity_type: 'transaction',
+          entity_local_id: localId,
+          workspace_ref: currentWorkspaceId,
+          payload,
         });
       } else {
         throw err;

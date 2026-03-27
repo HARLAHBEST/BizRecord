@@ -15,6 +15,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { api } from '../api/client';
+import * as offlineStore from '../storage/offlineStore';
 
 const AddItemScreen = function({ navigation }) {
   const themeContext = useTheme();
@@ -57,8 +58,22 @@ const AddItemScreen = function({ navigation }) {
 
     setLoading(true);
 
+    const localId = `local_item_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
     try {
-      await api.post(`/workspaces/${currentWorkspaceId}/inventory`, payload);
+      const result = await api.post(`/workspaces/${currentWorkspaceId}/inventory`, payload);
+      // Upsert into local SQLite so InventoryScreen shows the new item immediately
+      const serverId = result?.id ? String(result.id) : null;
+      offlineStore.upsertLocalInventory({
+        local_id: localId,
+        server_id: serverId,
+        workspace_server_id: currentWorkspaceId,
+        data: { ...payload, id: result?.id ?? localId },
+        sync_status: 'synced',
+      }, currentWorkspaceId).catch(() => null);
+      if (serverId) {
+        offlineStore.setIdMapping('inventory', localId, serverId).catch(() => null);
+      }
 
       Platform.OS === 'web'
         ? window.alert('Item added successfully!')
@@ -72,15 +87,36 @@ const AddItemScreen = function({ navigation }) {
       setLocation('');
       setMinStock('1');
     } catch (err) {
-      if (queueAction) {
-        await queueAction({
-          method: 'post',
-          path: `/workspaces/${currentWorkspaceId}/inventory`,
-          body: payload,
+      const isOffline = !err?.response;
+      if (isOffline) {
+        // Write to local SQLite immediately so the item appears while offline
+        const localItem = {
+          local_id: localId,
+          server_id: null,
+          workspace_server_id: currentWorkspaceId,
+          data: payload,
+          sync_status: 'pending_create',
+        };
+        await offlineStore.upsertLocalInventory(localItem, currentWorkspaceId);
+        // Queue to the structured outbox for background sync
+        await offlineStore.addSyncOutboxAction({
+          action_id: localId,
+          action_type: 'create_inventory',
+          entity_type: 'inventory',
+          entity_local_id: localId,
+          workspace_ref: currentWorkspaceId,
+          payload,
         });
         Platform.OS === 'web'
-          ? window.alert('Item queued and will sync once online')
-          : Alert.alert('Offline', 'Item queued and will sync once online');
+          ? window.alert('Item saved locally and will sync once online')
+          : Alert.alert('Offline', 'Item saved locally and will sync once online');
+        setName('');
+        setQuantity('1');
+        setCostPrice('0');
+        setSellingPrice('0');
+        setCategory('');
+        setLocation('');
+        setMinStock('1');
       } else {
         Alert.alert('Error', err?.message || 'Unable to add item');
       }

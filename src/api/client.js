@@ -1,4 +1,9 @@
 import { Platform } from 'react-native';
+import {
+  getCachedInventory,
+  getCachedTransactions,
+  getOfflineWorkspacesForUi,
+} from '../storage/offlineStore';
 
 // Multi-environment configuration
 const ENV = process.env.APP_ENV || 'development';
@@ -59,17 +64,62 @@ const handleResponse = async (response) => {
   return data;
 };
 
+const isLikelyOfflineError = (err) => !err?.response;
+
+const buildOfflineFallback = async (path, query) => {
+  if (path === '/workspaces') {
+    return getOfflineWorkspacesForUi();
+  }
+
+  const inventoryMatch = path.match(/^\/workspaces\/([^/]+)\/inventory$/);
+  if (inventoryMatch) {
+    return getCachedInventory(inventoryMatch[1]);
+  }
+
+  const transactionsMatch = path.match(/^\/workspaces\/([^/]+)\/transactions$/);
+  if (transactionsMatch) {
+    const workspaceId = transactionsMatch[1];
+    const type = query?.type;
+    let list = await getCachedTransactions(workspaceId, type);
+
+    const skip = Number(query?.skip || 0);
+    const take = Number(query?.take || 0);
+    if (skip > 0) {
+      list = list.slice(skip);
+    }
+    if (take > 0) {
+      list = list.slice(0, take);
+    }
+    return list;
+  }
+
+  return null;
+};
+
 export const api = {
   get: async (path, query) => {
     const url = buildUrl(path, query);
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-      },
-    });
-    return handleResponse(response);
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+      });
+      return handleResponse(response);
+    } catch (err) {
+      if (!isLikelyOfflineError(err)) {
+        throw err;
+      }
+
+      const fallback = await buildOfflineFallback(path, query);
+      if (fallback !== null) {
+        return fallback;
+      }
+
+      throw err;
+    }
   },
 
   post: async (path, body) => {

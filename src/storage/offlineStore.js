@@ -1,13 +1,28 @@
+import { executeSql } from './sqlite';
+
+export { executeSql };
+
+const parseRowData = (row) => {
+  if (!row?.data) return {};
+  try {
+    return JSON.parse(row.data);
+  } catch {
+    return {};
+  }
+};
+
+const localWorkspaceId = (workspaceId) => (workspaceId == null ? '' : String(workspaceId));
+
+const resolveWorkspaceIdFromRow = (row) => row.server_id || row.local_id;
+
 // Mark a row and outbox action as conflict
 export async function markConflict(entityType, localId, actionId) {
-  // Mark local row as conflict
   let table = null;
   if (entityType === 'inventory') table = 'local_inventory';
   if (entityType === 'transaction') table = 'local_transactions';
   if (entityType === 'debt') table = 'local_debts';
   if (!table) return;
   await executeSql(`UPDATE ${table} SET sync_status = 'conflict' WHERE local_id = ?`, [localId]);
-  // Mark outbox action as conflict
   await executeSql('UPDATE sync_outbox SET last_error = ?, sync_status = ? WHERE action_id = ?', ['conflict', 'conflict', actionId]);
 }
 
@@ -22,27 +37,61 @@ export async function getLocalRow(entityType, localId) {
   if (res.rows.length > 0) return res.rows.item(0);
   return null;
 }
-import { executeSql } from './sqlite';
+
 // --- Workspace-isolated local tables ---
-// TODO: Implement full CRUD for local_workspaces, local_inventory, local_transactions, local_debts
-// All local entity access must require workspaceLocalId
 export async function getLocalWorkspaces() {
-  return executeSql('SELECT * FROM local_workspaces');
+  return executeSql('SELECT * FROM local_workspaces ORDER BY updated_at_local DESC');
+}
+
+export async function cacheWorkspaces(workspaces) {
+  try {
+    const now = Date.now();
+    const list = Array.isArray(workspaces) ? workspaces : [];
+    for (const workspace of list) {
+      const id = workspace?.id != null ? String(workspace.id) : null;
+      if (!id) continue;
+      await executeSql(
+        `INSERT OR REPLACE INTO local_workspaces (local_id, server_id, name, description, status, sync_status, last_error, updated_at_local)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          id,
+          workspace?.name || 'Workspace',
+          workspace?.description || '',
+          workspace?.status || 'active',
+          'synced',
+          null,
+          now,
+        ]
+      );
+    }
+  } catch {
+    // ignore cache errors
+  }
 }
 
 export async function getLocalInventory(workspaceLocalId) {
   if (!workspaceLocalId) throw new Error('workspaceLocalId required');
-  return executeSql('SELECT * FROM local_inventory WHERE workspace_local_id = ?', [workspaceLocalId]);
+  return executeSql(
+    'SELECT * FROM local_inventory WHERE workspace_local_id = ? OR workspace_server_id = ?',
+    [workspaceLocalId, workspaceLocalId]
+  );
 }
 
 export async function getLocalTransactions(workspaceLocalId) {
   if (!workspaceLocalId) throw new Error('workspaceLocalId required');
-  return executeSql('SELECT * FROM local_transactions WHERE workspace_local_id = ?', [workspaceLocalId]);
+  return executeSql(
+    'SELECT * FROM local_transactions WHERE workspace_local_id = ? OR workspace_server_id = ?',
+    [workspaceLocalId, workspaceLocalId]
+  );
 }
 
 export async function getLocalDebts(workspaceLocalId) {
   if (!workspaceLocalId) throw new Error('workspaceLocalId required');
-  return executeSql('SELECT * FROM local_debts WHERE workspace_local_id = ?', [workspaceLocalId]);
+  return executeSql(
+    'SELECT * FROM local_debts WHERE workspace_local_id = ? OR workspace_server_id = ?',
+    [workspaceLocalId, workspaceLocalId]
+  );
 }
 
 // Insert/update/delete helpers for local entities (always workspace-scoped)
@@ -55,7 +104,7 @@ export async function upsertLocalInventory(item, workspaceLocalId) {
       item.local_id,
       item.server_id || null,
       workspaceLocalId,
-      item.workspace_server_id || null,
+      item.workspace_server_id || workspaceLocalId,
       JSON.stringify(item.data),
       item.sync_status || 'pending_create',
       item.last_error || null,
@@ -73,7 +122,7 @@ export async function upsertLocalTransaction(item, workspaceLocalId) {
       item.local_id,
       item.server_id || null,
       workspaceLocalId,
-      item.workspace_server_id || null,
+      item.workspace_server_id || workspaceLocalId,
       JSON.stringify(item.data),
       item.sync_status || 'pending_create',
       item.last_error || null,
@@ -91,7 +140,7 @@ export async function upsertLocalDebt(item, workspaceLocalId) {
       item.local_id,
       item.server_id || null,
       workspaceLocalId,
-      item.workspace_server_id || null,
+      item.workspace_server_id || workspaceLocalId,
       JSON.stringify(item.data),
       item.sync_status || 'pending_create',
       item.last_error || null,
@@ -102,22 +151,21 @@ export async function upsertLocalDebt(item, workspaceLocalId) {
 
 export async function deleteLocalInventory(localId, workspaceLocalId) {
   if (!workspaceLocalId) throw new Error('workspaceLocalId required');
-  return executeSql('DELETE FROM local_inventory WHERE local_id = ? AND workspace_local_id = ?', [localId, workspaceLocalId]);
+  return executeSql('DELETE FROM local_inventory WHERE local_id = ? AND (workspace_local_id = ? OR workspace_server_id = ?)', [localId, workspaceLocalId, workspaceLocalId]);
 }
 
 export async function deleteLocalTransaction(localId, workspaceLocalId) {
   if (!workspaceLocalId) throw new Error('workspaceLocalId required');
-  return executeSql('DELETE FROM local_transactions WHERE local_id = ? AND workspace_local_id = ?', [localId, workspaceLocalId]);
+  return executeSql('DELETE FROM local_transactions WHERE local_id = ? AND (workspace_local_id = ? OR workspace_server_id = ?)', [localId, workspaceLocalId, workspaceLocalId]);
 }
 
 export async function deleteLocalDebt(localId, workspaceLocalId) {
   if (!workspaceLocalId) throw new Error('workspaceLocalId required');
-  return executeSql('DELETE FROM local_debts WHERE local_id = ? AND workspace_local_id = ?', [localId, workspaceLocalId]);
+  return executeSql('DELETE FROM local_debts WHERE local_id = ? AND (workspace_local_id = ? OR workspace_server_id = ?)', [localId, workspaceLocalId, workspaceLocalId]);
 }
 
 // --- Structured outbox ---
 export async function addSyncOutboxAction(action) {
-  // action: { action_id, action_type, entity_type, entity_local_id, workspace_ref, payload, depends_on_action_id, retry_count, next_retry_at, last_error, created_at, updated_at }
   return executeSql(
     `INSERT OR REPLACE INTO sync_outbox (action_id, action_type, entity_type, entity_local_id, workspace_ref, payload, depends_on_action_id, retry_count, next_retry_at, last_error, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -161,30 +209,46 @@ export async function getServerId(entityType, localId) {
 export async function cacheInventory(workspaceId, items) {
   try {
     const now = Date.now();
-    const deleteSql = `DELETE FROM inventory WHERE workspaceId = ?`;
-    await executeSql(deleteSql, [workspaceId]);
+    const workspaceRef = localWorkspaceId(workspaceId);
+    const list = Array.isArray(items) ? items : [];
 
-    const insertSql = `INSERT OR REPLACE INTO inventory (id, workspaceId, data, updatedAt) VALUES (?, ?, ?, ?)`;
-    const promises = items.map((item) => {
-      return executeSql(insertSql, [item.id, workspaceId, JSON.stringify(item), now]);
-    });
-    await Promise.all(promises);
+    await executeSql('DELETE FROM local_inventory WHERE workspace_local_id = ? OR workspace_server_id = ?', [workspaceRef, workspaceRef]);
+
+    for (const item of list) {
+      const serverId = item?.id != null ? String(item.id) : null;
+      const localId = item?.local_id || (serverId ? `inventory_${workspaceRef}_${serverId}` : `inventory_${workspaceRef}_${now}_${Math.random().toString(16).slice(2)}`);
+      await executeSql(
+        `INSERT OR REPLACE INTO local_inventory (local_id, server_id, workspace_local_id, workspace_server_id, data, sync_status, last_error, updated_at_local)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          localId,
+          serverId,
+          workspaceRef,
+          workspaceRef,
+          JSON.stringify(item),
+          'synced',
+          null,
+          now,
+        ]
+      );
+    }
   } catch {
-    // SQLite may not be available (e.g., web) or errors may occur; ignore
+    // ignore
   }
 }
 
 export async function getCachedInventory(workspaceId) {
   try {
-    const rows = await executeSql(`SELECT data FROM inventory WHERE workspaceId = ?`, [workspaceId]);
+    const workspaceRef = localWorkspaceId(workspaceId);
+    const rows = await executeSql(
+      'SELECT * FROM local_inventory WHERE workspace_local_id = ? OR workspace_server_id = ? ORDER BY updated_at_local DESC',
+      [workspaceRef, workspaceRef]
+    );
     const results = [];
     for (let i = 0; i < rows.rows.length; i += 1) {
       const row = rows.rows.item(i);
-      try {
-        results.push(JSON.parse(row.data));
-      } catch {
-        // ignore parse errors
-      }
+      const data = parseRowData(row);
+      results.push({ ...data, id: data.id ?? row.server_id ?? row.local_id, local_id: row.local_id, sync_status: row.sync_status });
     }
     return results;
   } catch {
@@ -195,14 +259,29 @@ export async function getCachedInventory(workspaceId) {
 export async function cacheDebts(workspaceId, debts) {
   try {
     const now = Date.now();
-    const deleteSql = `DELETE FROM debts WHERE workspaceId = ?`;
-    await executeSql(deleteSql, [workspaceId]);
+    const workspaceRef = localWorkspaceId(workspaceId);
+    const list = Array.isArray(debts) ? debts : [];
 
-    const insertSql = `INSERT OR REPLACE INTO debts (id, workspaceId, data, updatedAt) VALUES (?, ?, ?, ?)`;
-    const promises = debts.map((item) => {
-      return executeSql(insertSql, [item.id, workspaceId, JSON.stringify(item), now]);
-    });
-    await Promise.all(promises);
+    await executeSql('DELETE FROM local_debts WHERE workspace_local_id = ? OR workspace_server_id = ?', [workspaceRef, workspaceRef]);
+
+    for (const item of list) {
+      const serverId = item?.id != null ? String(item.id) : null;
+      const localId = item?.local_id || (serverId ? `debt_${workspaceRef}_${serverId}` : `debt_${workspaceRef}_${now}_${Math.random().toString(16).slice(2)}`);
+      await executeSql(
+        `INSERT OR REPLACE INTO local_debts (local_id, server_id, workspace_local_id, workspace_server_id, data, sync_status, last_error, updated_at_local)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          localId,
+          serverId,
+          workspaceRef,
+          workspaceRef,
+          JSON.stringify(item),
+          'synced',
+          null,
+          now,
+        ]
+      );
+    }
   } catch {
     // ignore
   }
@@ -210,15 +289,16 @@ export async function cacheDebts(workspaceId, debts) {
 
 export async function getCachedDebts(workspaceId) {
   try {
-    const rows = await executeSql(`SELECT data FROM debts WHERE workspaceId = ?`, [workspaceId]);
+    const workspaceRef = localWorkspaceId(workspaceId);
+    const rows = await executeSql(
+      'SELECT * FROM local_debts WHERE workspace_local_id = ? OR workspace_server_id = ? ORDER BY updated_at_local DESC',
+      [workspaceRef, workspaceRef]
+    );
     const results = [];
     for (let i = 0; i < rows.rows.length; i += 1) {
       const row = rows.rows.item(i);
-      try {
-        results.push(JSON.parse(row.data));
-      } catch {
-        // ignore parse errors
-      }
+      const data = parseRowData(row);
+      results.push({ ...data, id: data.id ?? row.server_id ?? row.local_id, local_id: row.local_id, sync_status: row.sync_status });
     }
     return results;
   } catch {
@@ -229,14 +309,28 @@ export async function getCachedDebts(workspaceId) {
 export async function cacheTransactions(workspaceId, type, transactions) {
   try {
     const now = Date.now();
-    const deleteSql = `DELETE FROM transactions WHERE workspaceId = ? AND type = ?`;
-    await executeSql(deleteSql, [workspaceId, type]);
+    const workspaceRef = localWorkspaceId(workspaceId);
+    const list = Array.isArray(transactions) ? transactions : [];
 
-    const insertSql = `INSERT OR REPLACE INTO transactions (id, workspaceId, type, data, updatedAt) VALUES (?, ?, ?, ?, ?)`;
-    const promises = transactions.map((item) => {
-      return executeSql(insertSql, [item.id, workspaceId, type, JSON.stringify(item), now]);
-    });
-    await Promise.all(promises);
+    for (const item of list) {
+      const transactionType = (item?.type || type || '').toLowerCase();
+      const serverId = item?.id != null ? String(item.id) : null;
+      const localId = item?.local_id || (serverId ? `transaction_${workspaceRef}_${transactionType || 'any'}_${serverId}` : `transaction_${workspaceRef}_${now}_${Math.random().toString(16).slice(2)}`);
+      await executeSql(
+        `INSERT OR REPLACE INTO local_transactions (local_id, server_id, workspace_local_id, workspace_server_id, data, sync_status, last_error, updated_at_local)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          localId,
+          serverId,
+          workspaceRef,
+          workspaceRef,
+          JSON.stringify(item),
+          'synced',
+          null,
+          now,
+        ]
+      );
+    }
   } catch {
     // ignore
   }
@@ -244,17 +338,46 @@ export async function cacheTransactions(workspaceId, type, transactions) {
 
 export async function getCachedTransactions(workspaceId, type) {
   try {
-    const rows = await executeSql(`SELECT data FROM transactions WHERE workspaceId = ? AND type = ?`, [workspaceId, type]);
+    const workspaceRef = localWorkspaceId(workspaceId);
+    const rows = await executeSql(
+      'SELECT * FROM local_transactions WHERE workspace_local_id = ? OR workspace_server_id = ? ORDER BY updated_at_local DESC',
+      [workspaceRef, workspaceRef]
+    );
+
+    const normalizedType = type ? String(type).toLowerCase() : null;
     const results = [];
     for (let i = 0; i < rows.rows.length; i += 1) {
       const row = rows.rows.item(i);
-      try {
-        results.push(JSON.parse(row.data));
-      } catch {
-        // ignore parse errors
+      const data = parseRowData(row);
+      if (normalizedType && String(data?.type || '').toLowerCase() !== normalizedType) {
+        continue;
       }
+      results.push({ ...data, id: data.id ?? row.server_id ?? row.local_id, local_id: row.local_id, sync_status: row.sync_status });
     }
     return results;
+  } catch {
+    return [];
+  }
+}
+
+export async function getOfflineWorkspacesForUi() {
+  try {
+    const rows = await getLocalWorkspaces();
+    const result = [];
+    for (let i = 0; i < rows.rows.length; i += 1) {
+      const row = rows.rows.item(i);
+      const id = resolveWorkspaceIdFromRow(row);
+      if (!id) continue;
+      result.push({
+        id,
+        local_id: row.local_id,
+        server_id: row.server_id,
+        name: row.name || 'Workspace',
+        description: row.description || '',
+        status: row.status || 'active',
+      });
+    }
+    return result;
   } catch {
     return [];
   }

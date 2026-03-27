@@ -272,6 +272,32 @@ export const WorkspaceProvider = function({ children }) {
     [pendingActions.length, isSyncing, lastSyncedAt],
   );
 
+  // Applies the offline workspace list from SQLite.  If the table is empty
+  // (e.g. first launch after an old code version that never populated it),
+  // synthesises a minimal workspace entry from the persisted workspace ID so
+  // App.js navigates to MainTabs instead of WorkspaceSetupScreen.
+  const applyOfflineWorkspacesFallback = useCallback(async () => {
+    const localWorkspaces = await offlineStore.getOfflineWorkspacesForUi();
+    if (localWorkspaces.length > 0) {
+      setWorkspaces(localWorkspaces);
+      setCurrentWorkspaceId((prev) => {
+        if (prev && localWorkspaces.some((w) => String(w.id) === String(prev))) {
+          return prev;
+        }
+        return localWorkspaces[0]?.id || prev || null;
+      });
+    } else {
+      // local_workspaces table is empty — fall back to the stored workspace ID
+      // so the user can still navigate to MainTabs and see any cached screen data.
+      const storedId = await AsyncStorage.getItem(WORKSPACE_STORAGE_KEY);
+      if (storedId) {
+        setWorkspaces([{ id: storedId, name: 'My Workspace' }]);
+        setCurrentWorkspaceId(storedId);
+      }
+      // If no stored ID, workspaces stays empty → WorkspaceSetupScreen is correct
+    }
+  }, []); // useState setters are stable; no reactive deps needed
+
   const loadWorkspaces = useCallback(async () => {
     if (!token) {
       setWorkspaces([]);
@@ -284,26 +310,26 @@ export const WorkspaceProvider = function({ children }) {
     try {
       const data = await api.get('/workspaces');
       const list = Array.isArray(data) ? data : [];
-      setWorkspaces(list);
 
-      if (list.length === 0) {
-        setCurrentWorkspaceId(null);
+      if (list.length > 0) {
+        setWorkspaces(list);
+        await offlineStore.cacheWorkspaces(list);
+        setCurrentWorkspaceId((prev) => {
+          if (prev && list.some((w) => String(w.id) === String(prev))) {
+            return prev;
+          }
+          return list[0].id;
+        });
         return;
       }
 
-      setCurrentWorkspaceId((prev) => {
-        if (prev && list.some((w) => w.id === prev)) {
-          return prev;
-        }
-        return list[0].id;
-      });
+      await applyOfflineWorkspacesFallback();
     } catch (err) {
-      setWorkspaces([]);
-      setCurrentWorkspaceId(null);
+      await applyOfflineWorkspacesFallback();
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, applyOfflineWorkspacesFallback]);
 
   useEffect(() => {
     loadStoredWorkspaceId();
