@@ -26,10 +26,10 @@ export class WorkspaceMembership {
   @JoinColumn({ name: 'workspace_id' })
   workspace: Workspace;
 
-  @Column({ default: 'staff' })
+  @Column({ type: 'varchar', default: 'staff' })
   role: 'owner' | 'manager' | 'staff';
 
-  @Column({ name: 'is_active', default: true })
+  @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive: boolean;
 
   @CreateDateColumn({ name: 'created_at' })

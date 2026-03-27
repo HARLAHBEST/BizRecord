@@ -6,26 +6,26 @@ export class WorkspaceInvite {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'varchar' })
   email: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   userId: string | null;
 
   @ManyToOne(() => Workspace)
   @JoinColumn({ name: 'workspace_id' })
   workspace: Workspace;
 
-  @Column({ name: 'workspace_id' })
+  @Column({ name: 'workspace_id', type: 'uuid' })
   workspaceId: string;
 
-  @Column({ default: 'pending' })
+  @Column({ type: 'varchar', default: 'pending' })
   status: 'pending' | 'accepted' | 'declined' | 'expired';
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   role: string;
 
-  @Column({ name: 'invite_code', nullable: true })
+  @Column({ name: 'invite_code', type: 'varchar', nullable: true })
   inviteCode: string | null;
 
   @Column({ name: 'expires_at', type: 'timestamp', nullable: true })
