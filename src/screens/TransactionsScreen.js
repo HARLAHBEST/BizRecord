@@ -4,12 +4,13 @@ import { Card, Subtle, EmptyState, SkeletonBlock } from '../components/UI';
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { api } from '../api/client';
+import { cacheTransactions, getCachedTransactions } from '../storage/offlineStore';
 import { MaterialIcons } from '@expo/vector-icons';
 
 export default function TransactionsScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
-  const { currentWorkspaceId } = useWorkspace();
+  const { currentWorkspaceId, repo } = useWorkspace();
   const { width } = useWindowDimensions();
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -24,17 +25,38 @@ export default function TransactionsScreen({ navigation }) {
 
       setLoading(true);
       try {
+        const localRows = await repo.getTransactions();
+        const localList = [];
+        if (localRows?.rows?.length > 0) {
+          for (let i = 0; i < localRows.rows.length; i += 1) {
+            const row = localRows.rows.item(i);
+            const data = row.data ? JSON.parse(row.data) : {};
+            localList.push({
+              ...data,
+              id: data.id ?? row.server_id ?? row.local_id,
+              local_id: row.local_id,
+              sync_status: row.sync_status,
+            });
+          }
+        }
+        if (localList.length > 0) {
+          setTransactions(localList);
+        }
+
         const data = await api.get(`/workspaces/${currentWorkspaceId}/transactions`, { take: 50 });
-        setTransactions(Array.isArray(data) ? data : []);
+        const list = Array.isArray(data) ? data : [];
+        setTransactions(list);
+        cacheTransactions(currentWorkspaceId, null, list).catch(() => null);
       } catch (err) {
-        setTransactions([]);
+        const cached = await getCachedTransactions(currentWorkspaceId);
+        setTransactions(Array.isArray(cached) ? cached : []);
       } finally {
         setLoading(false);
       }
     };
 
     loadTransactions();
-  }, [currentWorkspaceId]);
+  }, [currentWorkspaceId, repo]);
 
   const renderAmount = useMemo(() => {
     return (item) => `₦${Number(item.totalAmount || 0).toLocaleString()}`;

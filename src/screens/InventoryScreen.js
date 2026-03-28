@@ -52,7 +52,12 @@ const HomeScreen = function({ navigation }) {
         for (let i = 0; i < localRows.rows.length; i++) {
           const row = localRows.rows.item(i);
           const data = row.data ? JSON.parse(row.data) : {};
-          localList.push({ ...data, local_id: row.local_id, sync_status: row.sync_status });
+          localList.push({
+            ...data,
+            id: data.id ?? row.server_id ?? row.local_id,
+            local_id: row.local_id,
+            sync_status: row.sync_status,
+          });
         }
       }
       setItems(localList);

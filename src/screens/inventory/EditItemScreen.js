@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, Platform, S
 import { useTheme } from '../../theme/ThemeContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { api } from '../../api/client';
+import * as offlineStore from '../../storage/offlineStore';
 
 export default function EditItemScreen({ navigation, route }) {
   const themeContext = useTheme();
@@ -55,13 +56,31 @@ export default function EditItemScreen({ navigation, route }) {
     setLoading(true);
 
     try {
+      const localId = item?.local_id || item?.id;
       if (item && item.id) {
         await api.put(
           `/workspaces/${currentWorkspaceId}/inventory/${item.id}`,
           payload,
         );
+        await offlineStore.upsertLocalInventory({
+          local_id: localId,
+          server_id: String(item.id).startsWith('local_') ? null : String(item.id),
+          workspace_server_id: currentWorkspaceId,
+          data: { ...item, ...payload, id: item.id, local_id: localId },
+          sync_status: 'synced',
+        }, currentWorkspaceId);
       } else {
-        await api.post(`/workspaces/${currentWorkspaceId}/inventory`, payload);
+        const created = await api.post(`/workspaces/${currentWorkspaceId}/inventory`, payload);
+        await offlineStore.upsertLocalInventory({
+          local_id: localId || String(created?.id),
+          server_id: created?.id ? String(created.id) : null,
+          workspace_server_id: currentWorkspaceId,
+          data: { ...payload, ...(created || {}), id: created?.id ?? localId },
+          sync_status: 'synced',
+        }, currentWorkspaceId);
+        if (localId && created?.id) {
+          await offlineStore.setIdMapping('inventory', localId, String(created.id));
+        }
       }
 
       Platform.OS === 'web'
@@ -75,6 +94,15 @@ export default function EditItemScreen({ navigation, route }) {
           ? `/workspaces/${currentWorkspaceId}/inventory/${item.id}`
           : `/workspaces/${currentWorkspaceId}/inventory`;
         const method = item?.id ? 'put' : 'post';
+        const localId = item?.local_id || item?.id || `local_item_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+        await offlineStore.upsertLocalInventory({
+          local_id: localId,
+          server_id: item?.id && !String(item.id).startsWith('local_') ? String(item.id) : null,
+          workspace_server_id: currentWorkspaceId,
+          data: { ...(item || {}), ...payload, id: item?.id || localId, local_id: localId },
+          sync_status: item?.id ? 'pending_update' : 'pending_create',
+        }, currentWorkspaceId);
 
         await queueAction({
           method,

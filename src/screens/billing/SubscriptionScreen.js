@@ -15,6 +15,7 @@ import { Card, AppButton, Title } from '../../components/UI';
 import { api } from '../../api/client';
 
 const PLAN_ORDER = ['basic', 'pro'];
+const isLikelyOfflineError = (err) => !err?.response && /network|offline|timeout|fetch/i.test(String(err?.message || ''));
 
 export default function SubscriptionScreen({ navigation }) {
   const { theme } = useTheme();
@@ -27,6 +28,7 @@ export default function SubscriptionScreen({ navigation }) {
   const [billingCycle, setBillingCycle] = useState('monthly');
   const [addons, setAddons] = useState({ workspaceSlots: 0, staffSeats: 0, whatsappBundles: 0 });
   const [lastReference, setLastReference] = useState(null);
+  const [onlineRequired, setOnlineRequired] = useState(false);
 
   const addonsAllowed = subscription?.trial?.addonsAllowed !== false;
 
@@ -36,11 +38,27 @@ export default function SubscriptionScreen({ navigation }) {
       api.get('/billing/subscription'),
       api.get('/billing/usage'),
     ]);
+    setOnlineRequired(false);
     setPlans(plansResp);
     setSubscription(subResp);
     setUsage(usageResp);
     setSelectedPlan(subResp?.plan || 'pro');
     setBillingCycle(subResp?.billing?.billingCycle || 'monthly');
+  };
+
+  const retryBillingLoad = async () => {
+    try {
+      setLoading(true);
+      await refreshBilling();
+    } catch (err) {
+      if (isLikelyOfflineError(err)) {
+        setOnlineRequired(true);
+        return;
+      }
+      Alert.alert('Billing', err?.message || 'Unable to load billing details.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -49,7 +67,11 @@ export default function SubscriptionScreen({ navigation }) {
       try {
         await refreshBilling();
       } catch (err) {
-        Alert.alert('Billing', err?.message || 'Unable to load billing details.');
+        if (isLikelyOfflineError(err)) {
+          setOnlineRequired(true);
+        } else {
+          Alert.alert('Billing', err?.message || 'Unable to load billing details.');
+        }
       } finally {
         setLoading(false);
       }
@@ -83,6 +105,10 @@ export default function SubscriptionScreen({ navigation }) {
   };
 
   const startCheckout = async () => {
+    if (onlineRequired) {
+      Alert.alert('Internet required', 'Billing requires internet connection. Come online to upgrade or renew this workspace.');
+      return;
+    }
     try {
       setProcessing(true);
       const payload = {
@@ -100,6 +126,9 @@ export default function SubscriptionScreen({ navigation }) {
         Alert.alert('Checkout', 'Payment initialized. Please complete payment and then verify.');
       }
     } catch (err) {
+      if (isLikelyOfflineError(err)) {
+        setOnlineRequired(true);
+      }
       Alert.alert('Checkout failed', err?.message || 'Unable to initialize payment.');
     } finally {
       setProcessing(false);
@@ -107,6 +136,10 @@ export default function SubscriptionScreen({ navigation }) {
   };
 
   const verifyLastPayment = async () => {
+    if (onlineRequired) {
+      Alert.alert('Internet required', 'Billing requires internet connection. Come online to verify payment.');
+      return;
+    }
     if (!lastReference) {
       Alert.alert('Verification', 'No recent payment reference found yet. Start checkout first.');
       return;
@@ -118,6 +151,9 @@ export default function SubscriptionScreen({ navigation }) {
       Alert.alert('Success', 'Payment verified and subscription updated.');
       await refreshBilling();
     } catch (err) {
+      if (isLikelyOfflineError(err)) {
+        setOnlineRequired(true);
+      }
       Alert.alert('Verification failed', err?.message || 'Unable to verify payment now.');
     } finally {
       setProcessing(false);
@@ -128,6 +164,21 @@ export default function SubscriptionScreen({ navigation }) {
     return (
       <View style={[styles.center, { backgroundColor: theme.colors.background }]}>
         <ActivityIndicator color={theme.colors.primary} />
+      </View>
+    );
+  }
+
+  if (onlineRequired) {
+    return (
+      <View style={[styles.center, { backgroundColor: theme.colors.background, padding: 16 }]}>
+        <Card style={{ width: '100%', maxWidth: 520 }}>
+          <Title>Subscription & Billing</Title>
+          <Text style={[styles.onlineRequiredText, { color: theme.colors.textSecondary }]}>
+            Billing is online-only. Connect to the internet to renew, upgrade, verify payment, or view live usage for this workspace.
+          </Text>
+          <AppButton title="Try Again" onPress={retryBillingLoad} style={{ marginTop: 12 }} />
+          <AppButton title="Back" variant="secondary" onPress={() => navigation.goBack()} style={{ marginTop: 10 }} />
+        </Card>
       </View>
     );
   }
@@ -268,6 +319,7 @@ export default function SubscriptionScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  onlineRequiredText: { fontSize: 14, lineHeight: 22, marginTop: 10 },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   sectionTitle: { fontSize: 16, fontWeight: '700', marginBottom: 8 },
   meta: { fontSize: 13, marginBottom: 4 },

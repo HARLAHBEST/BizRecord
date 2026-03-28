@@ -13,6 +13,7 @@ import {
 import { useTheme } from '../../theme/ThemeContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { api } from '../../api/client';
+import * as offlineStore from '../../storage/offlineStore';
 import { Card, Title, AppButton } from '../../components/UI';
 import UpgradeModal from '../../components/UpgradeModal';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -20,7 +21,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 export default function BranchCreateScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
-  const { currentWorkspaceId } = useWorkspace();
+  const { currentWorkspaceId, setWorkspaces } = useWorkspace();
 
   const [branchName, setBranchName] = useState('');
   const [location, setLocation] = useState('');
@@ -115,6 +116,73 @@ export default function BranchCreateScreen({ navigation }) {
       if (err?.data?.code === 'PLAN_LIMIT_REACHED') {
         setUpgradePayload(err.data);
         setShowUpgradeModal(true);
+        return;
+      }
+      if (!err?.response) {
+        if (managerEmail.trim() && !selectedManager) {
+          Alert.alert('Manager required', 'Manager lookup needs internet. Clear the manager field or reconnect first.');
+          return;
+        }
+
+        const localId = `local_branch_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        const localBranch = {
+          id: localId,
+          local_id: localId,
+          server_id: null,
+          name: branchName.trim(),
+          description: [location, phone, address].filter(Boolean).join(' | '),
+          parentWorkspaceId: currentWorkspaceId,
+          managerUser: selectedManager
+            ? {
+                name: selectedManager.name,
+                email: selectedManager.email,
+              }
+            : null,
+          status: 'active',
+          role: 'manager',
+          sync_status: 'pending_create',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        await offlineStore.executeSql(
+          `INSERT OR REPLACE INTO local_workspaces (local_id, server_id, name, description, parent_workspace_id, role, manager_user_name, manager_user_email, status, sync_status, last_error, updated_at_local)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            localId,
+            null,
+            localBranch.name,
+            localBranch.description,
+            currentWorkspaceId,
+            localBranch.role,
+            localBranch.managerUser?.name || null,
+            localBranch.managerUser?.email || null,
+            localBranch.status,
+            localBranch.sync_status,
+            null,
+            Date.now(),
+          ],
+        );
+        setWorkspaces((prev) => [localBranch, ...(prev || [])]);
+        await offlineStore.addSyncOutboxAction({
+          action_id: `create_workspace_${localId}`,
+          action_type: 'create_workspace',
+          entity_type: 'workspace',
+          entity_local_id: localId,
+          workspace_ref: localId,
+          payload: {
+            name: localBranch.name,
+            description: localBranch.description,
+            parentWorkspaceId: currentWorkspaceId,
+            managerUserId: selectedManager?.id || undefined,
+          },
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        });
+
+        Alert.alert('Offline', 'Branch saved locally and will sync when you come back online.', [
+          { text: 'OK', onPress: () => navigation.goBack() },
+        ]);
         return;
       }
       Alert.alert('Error', getErrorMessage(err, 'Unable to create branch'));

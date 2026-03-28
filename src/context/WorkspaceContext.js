@@ -542,6 +542,13 @@ export const WorkspaceProvider = function({ children }) {
     [pendingActions.length, isSyncing, lastSyncedAt],
   );
 
+  const currentWorkspace = useMemo(() => {
+    if (!Array.isArray(workspaces) || workspaces.length === 0) return null;
+    return workspaces.find((item) => String(item.id) === String(currentWorkspaceId)) || workspaces[0] || null;
+  }, [currentWorkspaceId, workspaces]);
+
+  const workspaceAccessBlocked = !!currentWorkspace && String(currentWorkspace?.status || 'active').toLowerCase() !== 'active';
+
   // Applies the offline workspace list from SQLite.  If the table is empty
   // (e.g. first launch after an old code version that never populated it),
   // synthesises a minimal workspace entry from the persisted workspace ID so
@@ -648,6 +655,12 @@ export const WorkspaceProvider = function({ children }) {
   }, [token, currentWorkspaceId, hydrateWorkspaceSnapshot]);
 
   useEffect(() => {
+    if (token && currentWorkspaceId && pendingActions.length > 0) {
+      processPendingActions();
+    }
+  }, [token, currentWorkspaceId, pendingActions.length, processPendingActions]);
+
+  useEffect(() => {
     persistWorkspaceId(currentWorkspaceId);
   }, [currentWorkspaceId]);
 
@@ -672,9 +685,11 @@ export const WorkspaceProvider = function({ children }) {
   const value = useMemo(
     () => ({
       workspaces,
+      currentWorkspace,
       setWorkspaces,
       currentWorkspaceId,
       setCurrentWorkspaceId,
+      workspaceAccessBlocked,
       loading,
       syncInfo,
       queueAction,
@@ -684,7 +699,9 @@ export const WorkspaceProvider = function({ children }) {
     }),
     [
       workspaces,
+      currentWorkspace,
       currentWorkspaceId,
+      workspaceAccessBlocked,
       loading,
       syncInfo,
       queueAction,

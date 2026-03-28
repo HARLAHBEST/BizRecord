@@ -13,7 +13,7 @@ import {
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { api } from '../api/client';
-import { cacheCustomers, getCachedCustomers } from '../storage/offlineStore';
+import { cacheCustomers, getCachedCustomers, setIdMapping, upsertLocalDebt } from '../storage/offlineStore';
 import { Card, Title, SkeletonBlock } from '../components/UI';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useCustomerSelect } from '../context/CustomerSelectContext';
@@ -68,8 +68,10 @@ export default function RecordDebtScreen({ navigation }) {
       : null;
     const payload = {
       type: 'debt',
+      quantity: 1,
+      unitPrice: parseFloat(amount),
       totalAmount: parseFloat(amount),
-      phone: phone || undefined,
+      phone: phone || selectedCustomer?.phone || undefined,
       dueDate: dueDate || undefined,
       notes: notes || undefined,
       customerId: selectedCustomer?.id || undefined,
@@ -78,8 +80,19 @@ export default function RecordDebtScreen({ navigation }) {
     };
 
     setLoading(true);
+    const localId = `local_debt_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     try {
-      await api.post(`/workspaces/${currentWorkspaceId}/transactions`, payload);
+      const result = await api.post(`/workspaces/${currentWorkspaceId}/transactions`, payload);
+      await upsertLocalDebt({
+        local_id: localId,
+        server_id: result?.id ? String(result.id) : null,
+        workspace_server_id: currentWorkspaceId,
+        data: { ...payload, ...(result || {}), id: result?.id ?? localId, local_id: localId },
+        sync_status: 'synced',
+      }, currentWorkspaceId);
+      if (result?.id) {
+        await setIdMapping('debt', localId, String(result.id));
+      }
       Alert.alert('Success', 'Debt recorded', [
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);

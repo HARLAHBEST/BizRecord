@@ -9,10 +9,11 @@ import { api } from '../../api/client';
 export default function BranchListScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
-  const { currentWorkspaceId } = useWorkspace();
+  const { currentWorkspaceId, workspaces, refreshWorkspaces } = useWorkspace();
   const [branches, setBranches] = useState([]);
   const [totals, setTotals] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [offlineNotice, setOfflineNotice] = useState('');
 
   const formatBranchDate = (dateValue) => {
     const date = new Date(dateValue);
@@ -29,19 +30,37 @@ export default function BranchListScreen({ navigation }) {
 
       setLoading(true);
       try {
+        const localBranches = (workspaces || []).filter((item) => item.parentWorkspaceId === currentWorkspaceId);
+        if (localBranches.length > 0) {
+          setBranches(localBranches);
+          setTotals({
+            branchCount: localBranches.length,
+            staffCount: localBranches.reduce((sum, item) => sum + Number(item.staffCount || 0), 0),
+            salesAmount: localBranches.reduce((sum, item) => sum + Number(item.salesAmount || 0), 0),
+          });
+        }
+
         const data = await api.get(`/workspaces/${currentWorkspaceId}/management/overview`);
         setBranches(Array.isArray(data?.branches) ? data.branches : []);
         setTotals(data?.totals || null);
+        setOfflineNotice('');
+        refreshWorkspaces?.().catch(() => null);
       } catch (err) {
-        setBranches([]);
-        setTotals(null);
+        const localBranches = (workspaces || []).filter((item) => item.parentWorkspaceId === currentWorkspaceId);
+        setBranches(localBranches);
+        setTotals({
+          branchCount: localBranches.length,
+          staffCount: localBranches.reduce((sum, item) => sum + Number(item.staffCount || 0), 0),
+          salesAmount: localBranches.reduce((sum, item) => sum + Number(item.salesAmount || 0), 0),
+        });
+        setOfflineNotice(localBranches.length > 0 ? 'Offline mode: showing cached branch list.' : 'Offline mode: branch details are limited until you reconnect.');
       } finally {
         setLoading(false);
       }
     };
 
     loadBranches();
-  }, [currentWorkspaceId]);
+  }, [currentWorkspaceId, refreshWorkspaces, workspaces]);
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
@@ -64,6 +83,11 @@ export default function BranchListScreen({ navigation }) {
           </Text>
         </View>
       ) : null}
+      {offlineNotice ? (
+        <View style={[styles.summaryStrip, { backgroundColor: theme.colors.card, borderBottomColor: theme.colors.border }]}>
+          <Text style={{ color: theme.colors.textSecondary }}>{offlineNotice}</Text>
+        </View>
+      ) : null}
       {loading ? (
         <View style={{ padding: 12 }}>
           <SkeletonBlock height={18} width="40%" />
@@ -74,7 +98,7 @@ export default function BranchListScreen({ navigation }) {
       ) : (
         <FlatList
           data={branches}
-          keyExtractor={(b) => b.id}
+          keyExtractor={(b, index) => (b?.id ? String(b.id) : `branch-${index}`)}
           contentContainerStyle={{ padding: 12 }}
           renderItem={({ item }) => (
             <Card>

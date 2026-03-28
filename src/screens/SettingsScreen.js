@@ -8,6 +8,7 @@ import {
   Modal,
   Platform,
   StatusBar,
+  Alert,
   useWindowDimensions,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -29,10 +30,12 @@ const SettingsScreen = function({ navigation }) {
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradePayload, setUpgradePayload] = useState(null);
   const [pendingInviteCount, setPendingInviteCount] = useState(0);
+  const [pendingInviteUnavailable, setPendingInviteUnavailable] = useState(false);
 
-  const currentWorkspace = workspace.workspaces.find((w) => w.id === workspace.currentWorkspaceId);
+  const currentWorkspace = workspace.currentWorkspace || workspace.workspaces.find((w) => w.id === workspace.currentWorkspaceId);
+  const workspaceAccessBlocked = !!currentWorkspace && String(currentWorkspace?.status || 'active').toLowerCase() !== 'active';
   const userRole = currentWorkspace?.role || user?.role || 'user';
-  const canManageWorkspace = userRole === 'owner' || userRole === 'manager';
+  const canManageWorkspace = !workspaceAccessBlocked && (userRole === 'owner' || userRole === 'manager');
   const normalizedPlan = user?.plan === 'pro' ? 'pro' : 'basic';
   const planLimit = normalizedPlan === 'pro' ? 3 : 1;
   const trialDaysLeft = user?.trialEndsAt
@@ -76,10 +79,12 @@ const SettingsScreen = function({ navigation }) {
           const invites = await api.get('/workspaces/invites/pending');
           if (active) {
             setPendingInviteCount(Array.isArray(invites) ? invites.length : 0);
+            setPendingInviteUnavailable(false);
           }
         } catch (err) {
           if (active) {
             setPendingInviteCount(0);
+            setPendingInviteUnavailable(true);
           }
         }
       };
@@ -124,6 +129,23 @@ const SettingsScreen = function({ navigation }) {
       </View>
 
       <View style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}>
+        {workspaceAccessBlocked ? (
+          <View style={styles.settingItem}>
+            <View style={styles.settingInfo}>
+              <MaterialIcons name="lock-clock" size={24} color={theme.colors.warning} />
+              <View style={styles.settingText}>
+                <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Workspace access paused</Text>
+                <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
+                  {currentWorkspace?.name || 'This workspace'} is {String(currentWorkspace?.status || 'inactive').replace(/_/g, ' ')}. Come online and renew billing to continue using protected business screens.
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity onPress={() => navigation.navigate('Subscription')}>
+              <MaterialIcons name="chevron-right" size={24} color={theme.colors.primary} />
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
             <MaterialIcons name="palette" size={24} color={theme.colors.primary} />
@@ -206,7 +228,9 @@ const SettingsScreen = function({ navigation }) {
             <View style={styles.settingText}>
               <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Join Workspace</Text>
               <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
-                {pendingInviteCount > 0
+                {pendingInviteUnavailable
+                  ? 'Invite count unavailable offline. Connect to refresh pending invites.'
+                  : pendingInviteCount > 0
                   ? `${pendingInviteCount} pending invite${pendingInviteCount === 1 ? '' : 's'} waiting for you`
                   : 'Accept a workspace invite with your email code'}
               </Text>
@@ -243,11 +267,22 @@ const SettingsScreen = function({ navigation }) {
             <View style={styles.settingText}>
               <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Team Management</Text>
               <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
-                Invite and manage workspace team members
+                {workspaceAccessBlocked ? 'Unavailable until this workspace billing is renewed online' : 'Invite and manage workspace team members'}
               </Text>
             </View>
           </View>
-          <TouchableOpacity onPress={() => navigation.navigate('TeamManagement')} disabled={!canManageWorkspace}>
+          <TouchableOpacity
+            onPress={() => {
+              if (!canManageWorkspace && workspaceAccessBlocked) {
+                Alert.alert('Billing required', 'This workspace is not active. Come online and renew billing to manage team access.');
+                return;
+              }
+              if (canManageWorkspace) {
+                navigation.navigate('TeamManagement');
+              }
+            }}
+            disabled={!canManageWorkspace}
+          >
             <MaterialIcons name="group-add" size={24} color={theme.colors.primary} />
           </TouchableOpacity>
         </View>
@@ -258,11 +293,22 @@ const SettingsScreen = function({ navigation }) {
             <View style={styles.settingText}>
               <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Branch Management</Text>
               <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
-                View branch performance, managers and branch staffing
+                {workspaceAccessBlocked ? 'Unavailable until this workspace billing is renewed online' : 'View branch performance, managers and branch staffing'}
               </Text>
             </View>
           </View>
-          <TouchableOpacity onPress={() => navigation.navigate('BranchList')} disabled={!canManageWorkspace}>
+          <TouchableOpacity
+            onPress={() => {
+              if (!canManageWorkspace && workspaceAccessBlocked) {
+                Alert.alert('Billing required', 'This workspace is not active. Come online and renew billing to manage branches.');
+                return;
+              }
+              if (canManageWorkspace) {
+                navigation.navigate('BranchList');
+              }
+            }}
+            disabled={!canManageWorkspace}
+          >
             <MaterialIcons name="chevron-right" size={24} color={theme.colors.primary} />
           </TouchableOpacity>
         </View>

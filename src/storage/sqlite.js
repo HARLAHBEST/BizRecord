@@ -51,6 +51,10 @@ export async function initDb() {
       server_id TEXT,
       name TEXT,
       description TEXT,
+      parent_workspace_id TEXT,
+      role TEXT,
+      manager_user_name TEXT,
+      manager_user_email TEXT,
       status TEXT,
       sync_status TEXT,
       last_error TEXT,
@@ -133,6 +137,19 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_sync_outbox_status_next_retry ON sync_outbox(depends_on_action_id, next_retry_at);
     CREATE INDEX IF NOT EXISTS idx_id_mapping_entity_local ON id_mapping(entity_type, local_id);
   `);
+
+  const safeAlter = async (sql) => {
+    try {
+      await database.execAsync(sql);
+    } catch {
+      // ignore duplicate-column errors on existing installs
+    }
+  };
+
+  await safeAlter('ALTER TABLE local_workspaces ADD COLUMN parent_workspace_id TEXT;');
+  await safeAlter('ALTER TABLE local_workspaces ADD COLUMN role TEXT;');
+  await safeAlter('ALTER TABLE local_workspaces ADD COLUMN manager_user_name TEXT;');
+  await safeAlter('ALTER TABLE local_workspaces ADD COLUMN manager_user_email TEXT;');
 }
 
 export async function executeSql(sql, params = []) {

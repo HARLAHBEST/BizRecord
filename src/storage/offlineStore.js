@@ -76,13 +76,17 @@ export async function cacheWorkspaces(workspaces) {
       const id = workspace?.id != null ? String(workspace.id) : null;
       if (!id) continue;
       await executeSql(
-        `INSERT OR REPLACE INTO local_workspaces (local_id, server_id, name, description, status, sync_status, last_error, updated_at_local)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT OR REPLACE INTO local_workspaces (local_id, server_id, name, description, parent_workspace_id, role, manager_user_name, manager_user_email, status, sync_status, last_error, updated_at_local)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           id,
           workspace?.name || 'Workspace',
           workspace?.description || '',
+          workspace?.parentWorkspaceId || null,
+          workspace?.role || null,
+          workspace?.managerUser?.name || null,
+          workspace?.managerUser?.email || null,
           workspace?.status || 'active',
           'synced',
           null,
@@ -98,7 +102,7 @@ export async function cacheWorkspaces(workspaces) {
 export async function getLocalInventory(workspaceLocalId) {
   if (!workspaceLocalId) throw new Error('workspaceLocalId required');
   return executeSql(
-    'SELECT * FROM local_inventory WHERE workspace_local_id = ? OR workspace_server_id = ?',
+    "SELECT * FROM local_inventory WHERE (workspace_local_id = ? OR workspace_server_id = ?) AND COALESCE(sync_status, '') != 'pending_delete'",
     [workspaceLocalId, workspaceLocalId]
   );
 }
@@ -106,7 +110,7 @@ export async function getLocalInventory(workspaceLocalId) {
 export async function getLocalTransactions(workspaceLocalId) {
   if (!workspaceLocalId) throw new Error('workspaceLocalId required');
   return executeSql(
-    'SELECT * FROM local_transactions WHERE workspace_local_id = ? OR workspace_server_id = ?',
+    "SELECT * FROM local_transactions WHERE (workspace_local_id = ? OR workspace_server_id = ?) AND COALESCE(sync_status, '') != 'pending_delete'",
     [workspaceLocalId, workspaceLocalId]
   );
 }
@@ -114,7 +118,7 @@ export async function getLocalTransactions(workspaceLocalId) {
 export async function getLocalDebts(workspaceLocalId) {
   if (!workspaceLocalId) throw new Error('workspaceLocalId required');
   return executeSql(
-    'SELECT * FROM local_debts WHERE workspace_local_id = ? OR workspace_server_id = ?',
+    "SELECT * FROM local_debts WHERE (workspace_local_id = ? OR workspace_server_id = ?) AND COALESCE(sync_status, '') != 'pending_delete'",
     [workspaceLocalId, workspaceLocalId]
   );
 }
@@ -122,7 +126,7 @@ export async function getLocalDebts(workspaceLocalId) {
 export async function getLocalCustomers(workspaceLocalId) {
   if (!workspaceLocalId) throw new Error('workspaceLocalId required');
   return executeSql(
-    'SELECT * FROM local_customers WHERE workspace_local_id = ? OR workspace_server_id = ?',
+    "SELECT * FROM local_customers WHERE (workspace_local_id = ? OR workspace_server_id = ?) AND COALESCE(sync_status, '') != 'pending_delete'",
     [workspaceLocalId, workspaceLocalId]
   );
 }
@@ -306,6 +310,7 @@ export async function getCachedInventory(workspaceId) {
     const results = [];
     for (let i = 0; i < rows.rows.length; i += 1) {
       const row = rows.rows.item(i);
+      if (row.sync_status === 'pending_delete') continue;
       const data = parseRowData(row);
       results.push({ ...data, id: data.id ?? row.server_id ?? row.local_id, local_id: row.local_id, sync_status: row.sync_status });
     }
@@ -359,6 +364,7 @@ export async function getCachedDebts(workspaceId) {
     const results = [];
     for (let i = 0; i < rows.rows.length; i += 1) {
       const row = rows.rows.item(i);
+      if (row.sync_status === 'pending_delete') continue;
       const data = parseRowData(row);
       results.push({ ...data, id: data.id ?? row.server_id ?? row.local_id, local_id: row.local_id, sync_status: row.sync_status });
     }
@@ -444,6 +450,7 @@ export async function getCachedTransactions(workspaceId, type) {
     const results = [];
     for (let i = 0; i < rows.rows.length; i += 1) {
       const row = rows.rows.item(i);
+      if (row.sync_status === 'pending_delete') continue;
       const data = parseRowData(row);
       if (normalizedType && String(data?.type || '').toLowerCase() !== normalizedType) {
         continue;
@@ -467,6 +474,7 @@ export async function getCachedCustomers(workspaceId, search) {
     const results = [];
     for (let i = 0; i < rows.rows.length; i += 1) {
       const row = rows.rows.item(i);
+      if (row.sync_status === 'pending_delete') continue;
       const data = parseRowData(row);
       const customer = { ...data, id: data.id ?? row.server_id ?? row.local_id, local_id: row.local_id, sync_status: row.sync_status };
       if (!normalizedSearch) {
@@ -501,6 +509,14 @@ export async function getOfflineWorkspacesForUi() {
         server_id: row.server_id,
         name: row.name || 'Workspace',
         description: row.description || '',
+        parentWorkspaceId: row.parent_workspace_id || null,
+        role: row.role || null,
+        managerUser: row.manager_user_name || row.manager_user_email
+          ? {
+              name: row.manager_user_name || null,
+              email: row.manager_user_email || null,
+            }
+          : null,
         status: row.status || 'active',
       });
     }

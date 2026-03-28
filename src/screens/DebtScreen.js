@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { api } from '../api/client';
-import { cacheDebts, getCachedDebts } from '../storage/offlineStore';
+import { cacheDebts, upsertLocalDebt } from '../storage/offlineStore';
 import { Card, Subtle, EmptyState, SkeletonBlock, AppButton } from '../components/UI';
 import { MaterialIcons } from '@expo/vector-icons';
 
@@ -21,7 +21,6 @@ const getDueInfo = (dueDate) => {
   if (!dueDate) return { label: 'No due date', overdue: false };
   const due = new Date(dueDate);
   const now = new Date();
-
   const diffMs = due.getTime() - now.getTime();
   const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
   if (diffDays < 0) {
@@ -40,6 +39,7 @@ export default function DebtScreen({ navigation }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [refreshTick, setRefreshTick] = useState(0);
+
   const isCompact = width < 390;
   const contentWidth = Math.min(width - (isCompact ? 20 : 32), 820);
   const edgePadding = isCompact ? 12 : 16;
@@ -61,21 +61,24 @@ export default function DebtScreen({ navigation }) {
       setError(null);
 
       try {
-        // Always read from local repo first
         const localRows = await repo.getDebts();
-        let localList = [];
+        const localList = [];
         if (localRows?.rows?.length > 0) {
-          for (let i = 0; i < localRows.rows.length; i++) {
+          for (let i = 0; i < localRows.rows.length; i += 1) {
             const row = localRows.rows.item(i);
             const data = row.data ? JSON.parse(row.data) : {};
-            if (data.type === 'debt') {
-              localList.push({ ...data, local_id: row.local_id, sync_status: row.sync_status });
+            if (String(data.type || '').toLowerCase() === 'debt') {
+              localList.push({
+                ...data,
+                id: data.id ?? row.server_id ?? row.local_id,
+                local_id: row.local_id,
+                sync_status: row.sync_status,
+              });
             }
           }
         }
         setDebts(localList);
 
-        // Optionally, fetch remote and update local cache if online
         try {
           const data = await api.get(`/workspaces/${currentWorkspaceId}/transactions`, {
             type: 'debt',
@@ -83,10 +86,10 @@ export default function DebtScreen({ navigation }) {
           const list = Array.isArray(data) ? data : [];
           setDebts(list);
           cacheDebts(currentWorkspaceId, list).catch(() => null);
-        } catch (err) {
-          // Ignore fetch error, stay local
+        } catch {
+          // Stay on local debt snapshot when offline.
         }
-      } catch (err) {
+      } catch {
         setError('Unable to load debts');
       } finally {
         setLoading(false);
@@ -96,14 +99,24 @@ export default function DebtScreen({ navigation }) {
     loadDebts();
   }, [currentWorkspaceId, refreshTick, repo]);
 
-  // Add sync status badge to each row (Not synced, Syncing, Failed) and retry button for failed
+  const normalizeWhatsAppNumber = (phone) => {
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (!digits) return null;
+    if (digits.startsWith('00')) return digits.slice(2);
+    if (digits.startsWith('234') && digits.length >= 13 && digits.length <= 15) return digits;
+    if (digits.length === 11 && digits.startsWith('0')) return `234${digits.slice(1)}`;
+    if (digits.length === 10) return `234${digits}`;
+    if (digits.length >= 8 && digits.length <= 15) return digits;
+    return null;
+  };
+
   const renderSyncBadge = (item) => {
     if (item.sync_status === 'pending_create' || item.sync_status === 'pending_update') {
-      return <Text style={{ color: '#FFA500', fontSize: 11, marginLeft: 6 }}>Not synced</Text>;
+      return <Text style={{ color: '#FFA500', fontSize: 11, marginTop: 6 }}>Not synced</Text>;
     }
     if (item.sync_status === 'failed') {
       return (
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
           <Text style={{ color: '#E53935', fontSize: 11 }}>Failed</Text>
           <TouchableOpacity
             onPress={() => handleRetrySync(item)}
@@ -118,11 +131,9 @@ export default function DebtScreen({ navigation }) {
     return null;
   };
 
-  // Row-level retry for failed syncs
   const handleRetrySync = async (item) => {
-    if (!repo || !currentWorkspaceId) return;
+    if (!repo?.queueAction || !currentWorkspaceId) return;
     try {
-      // Try to re-queue the failed action
       let action = null;
       if (item.sync_status === 'failed') {
         if (item.local_id && item.pending_action) {
@@ -134,9 +145,7 @@ export default function DebtScreen({ navigation }) {
             body: { ...item },
           };
         }
-        if (repo.queueAction) {
-          await repo.queueAction(action);
-        }
+        await repo.queueAction(action);
         Alert.alert('Retry', 'Sync retry queued and will sync once online');
       }
     } catch (err) {
@@ -145,33 +154,69 @@ export default function DebtScreen({ navigation }) {
   };
 
   const sendWhatsApp = (phone, name, amount) => {
-    const message = `Hello ${name}, this is a reminder from your shop regarding your balance of ₦${amount.toFixed(
-      2,
-    )}. Please make payment when you can.`;
+    const normalizedPhone = normalizeWhatsAppNumber(phone);
+    if (!normalizedPhone) {
+      Alert.alert('Invalid phone number', 'Use a valid customer number with country code or a local mobile number.');
+      return;
+    }
+    const message = `Hello ${name}, this is a reminder from your shop regarding your balance of ₦${amount.toFixed(2)}. Please make payment when you can.`;
     const encoded = encodeURIComponent(message);
-    const url = `https://wa.me/${phone.replace(/[^0-9]/g, '')}?text=${encoded}`;
+    const url = `https://wa.me/${normalizedPhone}?text=${encoded}`;
     Linking.openURL(url).catch(() => {
       Alert.alert('Unable to open WhatsApp', 'Please ensure WhatsApp is installed.');
     });
   };
 
   const markAsPaid = async (transactionId) => {
+    const existingDebt = debts.find((item) => String(item.id) === String(transactionId));
     try {
       await api.put(`/workspaces/${currentWorkspaceId}/transactions/${transactionId}/status`, {
         status: 'completed',
       });
-      setDebts((prev) =>
-        prev.map((d) => (d.id === transactionId ? { ...d, status: 'completed' } : d)),
-      );
+      if (existingDebt) {
+        await upsertLocalDebt({
+          local_id: existingDebt.local_id || existingDebt.id,
+          server_id: String(existingDebt.id).startsWith('local_') ? null : String(existingDebt.id),
+          workspace_server_id: currentWorkspaceId,
+          data: { ...existingDebt, status: 'completed', id: existingDebt.id, local_id: existingDebt.local_id || existingDebt.id },
+          sync_status: existingDebt.sync_status === 'pending_create' ? existingDebt.sync_status : 'synced',
+        }, currentWorkspaceId);
+      }
+      setDebts((prev) => prev.map((d) => (String(d.id) === String(transactionId) ? { ...d, status: 'completed' } : d)));
     } catch (err) {
-      Alert.alert('Error', err?.message || 'Unable to update debt status');
+      if (repo?.queueAction && !err?.response) {
+        if (existingDebt) {
+          await upsertLocalDebt({
+            local_id: existingDebt.local_id || existingDebt.id,
+            server_id: String(existingDebt.id).startsWith('local_') ? null : String(existingDebt.id),
+            workspace_server_id: currentWorkspaceId,
+            data: { ...existingDebt, status: 'completed', id: existingDebt.id, local_id: existingDebt.local_id || existingDebt.id },
+            sync_status: existingDebt.sync_status === 'pending_create' ? existingDebt.sync_status : 'pending_update',
+          }, currentWorkspaceId);
+        }
+        await repo.queueAction({
+          method: 'put',
+          path: `/workspaces/${currentWorkspaceId}/transactions/${transactionId}/status`,
+          body: { status: 'completed' },
+        });
+        setDebts((prev) =>
+          prev.map((d) =>
+            String(d.id) === String(transactionId)
+              ? { ...d, status: 'completed', sync_status: d.sync_status === 'pending_create' ? d.sync_status : 'pending_update' }
+              : d
+          ),
+        );
+        Alert.alert('Offline', 'Debt status will sync once online');
+      } else {
+        Alert.alert('Error', err?.message || 'Unable to update debt status');
+      }
     }
   };
 
   const pendingCount = useMemo(() => debts.filter((d) => d.status === 'pending').length, [debts]);
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}> 
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <View style={[styles.header, { alignSelf: 'center', width: contentWidth, paddingHorizontal: edgePadding }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <TouchableOpacity
@@ -186,11 +231,9 @@ export default function DebtScreen({ navigation }) {
             <MaterialIcons name="arrow-back" size={20} color={theme.colors.textPrimary} />
           </TouchableOpacity>
           <View>
-          <Text style={[styles.title, { color: theme.colors.textPrimary, fontSize: isCompact ? 20 : 22 }]}>Who Owes Me</Text>
-          <Subtle>
-            {pendingCount} pending • Tap the button to send a reminder
-          </Subtle>
-          {error ? <Text style={[styles.errorText, { color: theme.colors.error }]}>{error}</Text> : null}
+            <Text style={[styles.title, { color: theme.colors.textPrimary, fontSize: isCompact ? 20 : 22 }]}>Who Owes Me</Text>
+            <Subtle>{pendingCount} pending • Tap the button to send a reminder</Subtle>
+            {error ? <Text style={[styles.errorText, { color: theme.colors.error }]}>{error}</Text> : null}
           </View>
         </View>
         <AppButton title="Add" icon="add" variant="primary" onPress={() => navigation.navigate('RecordDebt')} style={styles.addButton} />
@@ -206,7 +249,7 @@ export default function DebtScreen({ navigation }) {
       ) : (
         <FlatList
           data={debts}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item, index) => (item?.id ? String(item.id) : `debt-${index}`)}
           contentContainerStyle={{ paddingHorizontal: edgePadding, paddingBottom: 32 }}
           style={{ alignSelf: 'center', width: contentWidth }}
           ListEmptyComponent={() => (
@@ -223,10 +266,13 @@ export default function DebtScreen({ navigation }) {
           renderItem={({ item }) => {
             const dueInfo = getDueInfo(item.dueDate);
             const isPending = item.status === 'pending';
+            const amount = Number(item.totalAmount || 0);
 
             return (
-              <Card style={[styles.card, { borderColor: theme.colors.border, marginBottom: 18, borderRadius: 14, elevation: 2 }]}
-                accessible accessibilityLabel={`Debt for ${item.customerName || 'Unknown'}: ${dueInfo.label}, Status: ${isPending ? 'Pending' : 'Paid'}`}
+              <Card
+                style={[styles.card, { borderColor: theme.colors.border, marginBottom: 18, borderRadius: 14, elevation: 2 }]}
+                accessible
+                accessibilityLabel={`Debt for ${item.customerName || 'Unknown'}: ${dueInfo.label}, Status: ${isPending ? 'Pending' : 'Paid'}`}
               >
                 <View style={styles.row}>
                   <View style={styles.info}>
@@ -235,17 +281,21 @@ export default function DebtScreen({ navigation }) {
                     </Text>
                     <Subtle style={{ marginTop: 4 }}>{dueInfo.label}</Subtle>
                     <Subtle style={{ marginTop: 2 }}>Status: {isPending ? 'Pending' : 'Paid'}</Subtle>
+                    {item.phone ? <Subtle style={{ marginTop: 2 }}>Phone: {item.phone}</Subtle> : null}
+                    {item.notes ? <Subtle style={{ marginTop: 2 }}>Note: {item.notes}</Subtle> : null}
+                    {renderSyncBadge(item)}
                   </View>
                   <View style={styles.amountContainer}>
                     <Text style={{ color: theme.colors.error, fontWeight: '700', fontSize: 17 }}>
-                      ₦{parseFloat(item.totalAmount).toLocaleString()}
+                      ₦{amount.toLocaleString()}
                     </Text>
                     <AppButton
                       title="WhatsApp"
                       variant="primary"
-                      onPress={() => sendWhatsApp(item.phone || '', item.customerName || 'Friend', parseFloat(item.totalAmount))}
+                      onPress={() => sendWhatsApp(item.phone || '', item.customerName || 'Friend', amount)}
                       style={[styles.whatsappButton, { backgroundColor: '#25D366', borderColor: '#25D366', marginTop: 8 }]}
                       accessibilityLabel={`Send WhatsApp reminder to ${item.customerName || 'Friend'}`}
+                      disabled={!normalizeWhatsAppNumber(item.phone)}
                     />
                     {isPending ? (
                       <AppButton
@@ -270,13 +320,12 @@ export default function DebtScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
+    paddingTop: 10,
+    paddingBottom: 6,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingTop: 14,
-    paddingBottom: 10,
+    alignItems: 'center',
   },
-  title: { fontSize: 22, fontWeight: '700', marginBottom: 4 },
   backButton: {
     width: 34,
     height: 34,
@@ -286,28 +335,35 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 10,
   },
-  errorText: { marginTop: 8 },
+  title: {
+    fontWeight: '700',
+  },
   addButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 2,
+    minWidth: 82,
+  },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  info: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  amountContainer: {
+    alignItems: 'flex-end',
   },
   card: {
-    marginBottom: 12,
-    borderWidth: 1,
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 2,
+    padding: 14,
   },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  info: { flex: 1 },
-  amountContainer: { alignItems: 'flex-end', marginLeft: 12, maxWidth: '45%' },
-  whatsappButton: { marginTop: 8, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
-  payButton: { marginTop: 8, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
+  whatsappButton: {
+    minWidth: 116,
+  },
+  payButton: {
+    minWidth: 116,
+  },
+  errorText: {
+    marginTop: 4,
+    fontSize: 12,
+  },
 });

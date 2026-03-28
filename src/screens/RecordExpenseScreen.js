@@ -13,6 +13,7 @@ import {
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { api } from '../api/client';
+import { setIdMapping, upsertLocalTransaction } from '../storage/offlineStore';
 import { Card, Title, SkeletonBlock, EmptyState } from '../components/UI';
 import { MaterialIcons } from '@expo/vector-icons';
 
@@ -62,8 +63,19 @@ export default function RecordExpenseScreen({ navigation }) {
     };
 
     setLoading(true);
+    const localId = `local_tx_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     try {
-      await api.post(`/workspaces/${currentWorkspaceId}/transactions`, payload);
+      const result = await api.post(`/workspaces/${currentWorkspaceId}/transactions`, payload);
+      await upsertLocalTransaction({
+        local_id: localId,
+        server_id: result?.id ? String(result.id) : null,
+        workspace_server_id: currentWorkspaceId,
+        data: { ...payload, ...(result || {}), id: result?.id ?? localId, local_id: localId },
+        sync_status: 'synced',
+      }, currentWorkspaceId);
+      if (result?.id) {
+        await setIdMapping('transaction', localId, String(result.id));
+      }
 
       Alert.alert(
         'Expense recorded',
