@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput, Alert } from 'react-native';
 import { SkeletonBlock, EmptyState } from '../components/UI';
 import { useTheme } from '../theme/ThemeContext';
@@ -7,7 +7,7 @@ import { api } from '../api/client';
 import { cacheCustomers, getCachedCustomers } from '../storage/offlineStore';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useCustomerSelect } from '../context/CustomerSelectContext';
-import { useRoute } from '@react-navigation/native';
+import { useFocusEffect, useRoute } from '@react-navigation/native';
 
 
 export default function CustomerListScreen({ navigation }) {
@@ -36,7 +36,11 @@ export default function CustomerListScreen({ navigation }) {
     }
   };
 
-  useEffect(() => { loadCustomers(); }, [currentWorkspaceId, search]);
+  useFocusEffect(
+    useCallback(() => {
+      loadCustomers();
+    }, [currentWorkspaceId, search]),
+  );
 
   const handleDelete = async (id) => {
     if (!currentWorkspaceId) return;
@@ -66,7 +70,12 @@ export default function CustomerListScreen({ navigation }) {
           onChangeText={setSearch}
           accessibilityLabel="Search customers"
         />
-        <TouchableOpacity onPress={() => navigation.navigate('AddCustomerScreen')} style={{ marginLeft: 8 }} accessibilityLabel="Add customer" activeOpacity={0.7}>
+        <TouchableOpacity
+          onPress={() => navigation.navigate('AddCustomerScreen', { selectAfterCreate: !!selectMode })}
+          style={{ marginLeft: 8 }}
+          accessibilityLabel="Add customer"
+          activeOpacity={0.7}
+        >
           <MaterialIcons name="person-add" size={28} color={theme.colors.primary} />
         </TouchableOpacity>
       </View>
@@ -116,7 +125,7 @@ export default function CustomerListScreen({ navigation }) {
               subtitle="Add customers to your workspace."
               style={{ marginTop: 32 }}
               ctaLabel="Add Customer"
-              onCtaPress={() => navigation.navigate('AddCustomerScreen')}
+              onCtaPress={() => navigation.navigate('AddCustomerScreen', { selectAfterCreate: !!selectMode })}
               accessibilityLabel="No customers found. Add a customer."
             />
           }

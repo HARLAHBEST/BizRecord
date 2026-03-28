@@ -96,10 +96,21 @@ export default function TeamManagementScreen({ navigation }) {
         Alert.alert('Already added', `${email} already belongs to this workspace.`);
         return;
       } else {
-        await api.post(`/workspaces/${currentWorkspaceId}/team/invite`, {
+        const inviteResult = await api.post(`/workspaces/${currentWorkspaceId}/team/invite`, {
           email,
           role: inviteRole,
         });
+        setInviteEmail('');
+        setInviteRole('staff');
+        await loadOverview(true);
+
+        if (inviteResult?.delivery === 'manual_code_required' && inviteResult?.inviteCode) {
+          Alert.alert(
+            'Invite created',
+            `Email delivery is not configured yet.\n\nInvite code for ${email}: ${inviteResult.inviteCode}`,
+          );
+          return;
+        }
       }
 
       setInviteEmail('');

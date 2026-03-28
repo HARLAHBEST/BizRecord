@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -25,6 +25,7 @@ import {
 import { Card, Title, SkeletonBlock, EmptyState } from '../components/UI';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useCustomerSelect } from '../context/CustomerSelectContext';
+import { useFocusEffect } from '@react-navigation/native';
 
 
 export default function RecordSaleScreen({ navigation, route }) {
@@ -46,24 +47,27 @@ export default function RecordSaleScreen({ navigation, route }) {
   const { selectedCustomer, setSelectedCustomer } = useCustomerSelect();
   const customerId = selectedCustomer ? selectedCustomer.id : '';
   const [customers, setCustomers] = useState([]);
-    React.useEffect(() => {
-      const loadCustomers = async () => {
-        if (!currentWorkspaceId) {
-          setCustomers([]);
-          return;
-        }
-        try {
-          const data = await api.get(`/workspaces/${currentWorkspaceId}/customers`);
-          const list = Array.isArray(data) ? data : [];
-          setCustomers(list);
-          cacheCustomers(currentWorkspaceId, list).catch(() => null);
-        } catch {
-          const cached = await getCachedCustomers(currentWorkspaceId);
-          setCustomers(Array.isArray(cached) ? cached : []);
-        }
-      };
+  const loadCustomers = useCallback(async () => {
+    if (!currentWorkspaceId) {
+      setCustomers([]);
+      return;
+    }
+    try {
+      const data = await api.get(`/workspaces/${currentWorkspaceId}/customers`);
+      const list = Array.isArray(data) ? data : [];
+      setCustomers(list);
+      cacheCustomers(currentWorkspaceId, list).catch(() => null);
+    } catch {
+      const cached = await getCachedCustomers(currentWorkspaceId);
+      setCustomers(Array.isArray(cached) ? cached : []);
+    }
+  }, [currentWorkspaceId]);
+
+  useFocusEffect(
+    useCallback(() => {
       loadCustomers();
-    }, [currentWorkspaceId]);
+    }, [loadCustomers]),
+  );
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [inventoryLoading, setInventoryLoading] = useState(false);
@@ -370,7 +374,7 @@ export default function RecordSaleScreen({ navigation, route }) {
                 {customerId ? (customers.find(c => c.id === customerId)?.name || 'Select customer') : 'Select customer'}
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate('AddCustomerScreen')} style={{ marginLeft: 8 }}>
+            <TouchableOpacity onPress={() => navigation.navigate('AddCustomerScreen', { selectAfterCreate: true })} style={{ marginLeft: 8 }}>
               <MaterialIcons name="person-add" size={24} color={theme.colors.primary} />
             </TouchableOpacity>
           </View>

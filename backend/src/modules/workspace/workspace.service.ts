@@ -7,6 +7,7 @@ import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { BillingService } from '../billing/billing.service';
 import { WorkspaceInvite } from './entities/invite.entity';
 import { EmailQueueService } from '../notifications/email-queue.service';
+import { EmailService } from '../notifications/email.service';
 import { Transaction } from '../transactions/entities/transaction.entity';
 import { InventoryItem } from '../inventory/entities/inventory-item.entity';
 import { WorkspaceMembership } from './entities/workspace-membership.entity';
@@ -30,6 +31,7 @@ export class WorkspaceService {
     private inventoryRepository: Repository<InventoryItem>,
     private billingService: BillingService,
     private readonly emailQueueService: EmailQueueService,
+    private readonly emailService: EmailService,
   ) {}
 
   private normalizeWorkspaceRole(role?: string): 'owner' | 'manager' | 'staff' {
@@ -380,7 +382,7 @@ export class WorkspaceService {
       .addGroupBy('createdBy.email')
       .addGroupBy('workspace.id')
       .addGroupBy('workspace.name')
-      .orderBy('salesAmount', 'DESC')
+      .orderBy("SUM(CASE WHEN transaction.type = 'sale' THEN transaction.totalAmount ELSE 0 END)", 'DESC')
       .getRawMany();
 
     const pendingInvites = await this.invitesRepository.find({
@@ -754,12 +756,29 @@ export class WorkspaceService {
     });
     await this.invitesRepository.save(invite);
     // Send invite email
-    this.emailQueueService.enqueue({
-      to: normalizedEmail,
-      subject: `Invitation to join workspace '${workspace.name}'`,
-      text: `You have been invited to join workspace '${workspace.name}' as ${inviteRole}. Your invite code is ${inviteCode}. This code expires in ${this.inviteExpiryDays} days. Sign in to BizRecord and enter the code to accept.`,
-      html: `<p>You have been invited to join workspace '<b>${workspace.name}</b>' as <b>${inviteRole}</b>.</p><p>Your invite code is <b>${inviteCode}</b>.</p><p>This code expires on <b>${expiresAt.toDateString()}</b>.</p><p>Sign in to BizRecord and enter the code to accept the invite.</p>`,
-    });
-    return { invited: true, email: normalizedEmail, workspaceId, inviteId: invite.id, expiresAt };
+    const emailReadiness = this.emailService.getDeliveryReadiness();
+    let delivery: 'queued' | 'manual_code_required' = 'queued';
+
+    if (emailReadiness.canSend) {
+      this.emailQueueService.enqueue({
+        to: normalizedEmail,
+        subject: `Invitation to join workspace '${workspace.name}'`,
+        text: `You have been invited to join workspace '${workspace.name}' as ${inviteRole}. Your invite code is ${inviteCode}. This code expires in ${this.inviteExpiryDays} days. Sign in to BizRecord and enter the code to accept.`,
+        html: `<p>You have been invited to join workspace '<b>${workspace.name}</b>' as <b>${inviteRole}</b>.</p><p>Your invite code is <b>${inviteCode}</b>.</p><p>This code expires on <b>${expiresAt.toDateString()}</b>.</p><p>Sign in to BizRecord and enter the code to accept the invite.</p>`,
+      });
+    } else {
+      delivery = 'manual_code_required';
+    }
+
+    return {
+      invited: true,
+      email: normalizedEmail,
+      workspaceId,
+      inviteId: invite.id,
+      expiresAt,
+      delivery,
+      inviteCode: delivery === 'manual_code_required' ? inviteCode : undefined,
+      deliveryWarning: delivery === 'manual_code_required' ? emailReadiness.reason : undefined,
+    };
   }
 }

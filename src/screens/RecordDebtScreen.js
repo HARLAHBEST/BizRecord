@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import { cacheCustomers, getCachedCustomers } from '../storage/offlineStore';
 import { Card, Title, SkeletonBlock } from '../components/UI';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useCustomerSelect } from '../context/CustomerSelectContext';
+import { useFocusEffect } from '@react-navigation/native';
 
 export default function RecordDebtScreen({ navigation }) {
   const themeContext = useTheme();
@@ -31,24 +32,27 @@ export default function RecordDebtScreen({ navigation }) {
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    const loadCustomers = async () => {
-      if (!currentWorkspaceId) {
-        setCustomers([]);
-        return;
-      }
-      try {
-        const data = await api.get(`/workspaces/${currentWorkspaceId}/customers`);
-        const list = Array.isArray(data) ? data : [];
-        setCustomers(list);
-        cacheCustomers(currentWorkspaceId, list).catch(() => null);
-      } catch {
-        const cached = await getCachedCustomers(currentWorkspaceId);
-        setCustomers(Array.isArray(cached) ? cached : []);
-      }
-    };
-    loadCustomers();
+  const loadCustomers = useCallback(async () => {
+    if (!currentWorkspaceId) {
+      setCustomers([]);
+      return;
+    }
+    try {
+      const data = await api.get(`/workspaces/${currentWorkspaceId}/customers`);
+      const list = Array.isArray(data) ? data : [];
+      setCustomers(list);
+      cacheCustomers(currentWorkspaceId, list).catch(() => null);
+    } catch {
+      const cached = await getCachedCustomers(currentWorkspaceId);
+      setCustomers(Array.isArray(cached) ? cached : []);
+    }
   }, [currentWorkspaceId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadCustomers();
+    }, [loadCustomers]),
+  );
 
   const handleSubmit = async () => {
     if (!currentWorkspaceId) {
@@ -147,7 +151,7 @@ export default function RecordDebtScreen({ navigation }) {
                   {selectedCustomer?.id ? (customers.find(c => c.id === selectedCustomer.id)?.name || selectedCustomer.name || 'Select customer') : 'Select customer'}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => navigation.navigate('AddCustomerScreen')} style={{ marginLeft: 8 }} accessibilityLabel="Add customer" activeOpacity={0.7}>
+              <TouchableOpacity onPress={() => navigation.navigate('AddCustomerScreen', { selectAfterCreate: true })} style={{ marginLeft: 8 }} accessibilityLabel="Add customer" activeOpacity={0.7}>
                 <MaterialIcons name="person-add" size={24} color={theme.colors.primary} />
               </TouchableOpacity>
             </View>
