@@ -106,16 +106,25 @@ export const AuthProvider = ({ children }) => {
     const response = await api.post('/auth/register', registerDto);
     // Support both register response shapes:
     // 1) { access_token, user } -> save directly
-    // 2) user object only -> login immediately
+    // 2) verification-first response -> stay signed out until OTP is confirmed
+    // 3) user object only -> login immediately
     if (response?.access_token && response?.user) {
       await saveAuth(response.access_token, response.user);
       return response.user;
     }
 
-    if (!response?.requiresEmailVerification) {
+    const requiresEmailVerification =
+      response?.requiresEmailVerification === true ||
+      response?.emailVerified === false;
+
+    if (!requiresEmailVerification) {
       await login(registerDto.email, registerDto.password);
     }
-    return response;
+    return {
+      ...response,
+      requiresEmailVerification,
+      email: response?.email || registerDto.email,
+    };
   };
 
   const login = async (email, password) => {

@@ -228,12 +228,25 @@ export class WorkspaceService {
       }
 
       if (createWorkspaceDto.managerUserId) {
-        managerUser = await this.usersRepository.findOne({
-          where: { id: createWorkspaceDto.managerUserId },
+        const managerMembership = await this.membershipsRepository.findOne({
+          where: {
+            workspaceId: createWorkspaceDto.parentWorkspaceId,
+            userId: createWorkspaceDto.managerUserId,
+            isActive: true,
+          },
+          relations: ['user'],
         });
-        if (!managerUser) {
-          throw new NotFoundException('Selected manager user not found');
+        if (!managerMembership?.user) {
+          throw new NotFoundException(
+            'Selected branch manager must already belong to this workspace team',
+          );
         }
+        if (this.getEffectiveWorkspaceRole(managerMembership) !== 'manager') {
+          throw new BadRequestException(
+            'Selected branch manager must have manager access in the parent workspace',
+          );
+        }
+        managerUser = managerMembership.user;
       }
     }
 

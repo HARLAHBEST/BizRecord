@@ -43,7 +43,10 @@ export default function LoginScreen({ navigation }) {
       const message = err?.message || 'Unable to sign in';
       setError(message);
       if (/email not verified/i.test(message)) {
-        navigation.navigate('VerifyEmail', { email: email.trim() });
+        navigation.replace('VerifyEmail', {
+          email: email.trim(),
+          fromLogin: true,
+        });
       }
     } finally {
       setLoading(false);

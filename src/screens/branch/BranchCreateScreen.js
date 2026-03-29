@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -9,14 +9,27 @@ import {
   Platform,
   KeyboardAvoidingView,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { api } from '../../api/client';
 import * as offlineStore from '../../storage/offlineStore';
-import { Card, Title, AppButton } from '../../components/UI';
+import { Card, Title, AppButton, EmptyState, Subtle } from '../../components/UI';
 import UpgradeModal from '../../components/UpgradeModal';
 import { MaterialIcons } from '@expo/vector-icons';
+
+const sortMembers = (members = []) =>
+  [...members].sort((left, right) => {
+    if (left.role === right.role) {
+      return String(left.name || left.email || '').localeCompare(
+        String(right.name || right.email || ''),
+      );
+    }
+    if (left.role === 'manager') return -1;
+    if (right.role === 'manager') return 1;
+    return 0;
+  });
 
 export default function BranchCreateScreen({ navigation }) {
   const themeContext = useTheme();
@@ -25,16 +38,58 @@ export default function BranchCreateScreen({ navigation }) {
 
   const [branchName, setBranchName] = useState('');
   const [location, setLocation] = useState('');
-  const [managerEmail, setManagerEmail] = useState('');
+  const [managerQuery, setManagerQuery] = useState('');
   const [selectedManager, setSelectedManager] = useState(null);
-  const [managerSearchMessage, setManagerSearchMessage] = useState('');
-  const [managerSearchState, setManagerSearchState] = useState('idle');
-  const [managerSearchLoading, setManagerSearchLoading] = useState(false);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [teamLoading, setTeamLoading] = useState(false);
+  const [teamError, setTeamError] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [loading, setLoading] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradePayload, setUpgradePayload] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadTeamMembers = async () => {
+      if (!currentWorkspaceId) {
+        if (active) {
+          setTeamMembers([]);
+          setSelectedManager(null);
+          setTeamError('');
+        }
+        return;
+      }
+
+      setTeamLoading(true);
+      setTeamError('');
+      try {
+        const data = await api.get(`/workspaces/${currentWorkspaceId}/management/overview`);
+        if (!active) return;
+        const members = sortMembers(Array.isArray(data?.members) ? data.members : []);
+        setTeamMembers(members);
+        setSelectedManager((current) => {
+          if (!current?.id) return null;
+          return members.find((member) => member.id === current.id) || null;
+        });
+      } catch (err) {
+        if (!active) return;
+        setTeamMembers([]);
+        setSelectedManager(null);
+        setTeamError(err?.message || 'Unable to load team members right now.');
+      } finally {
+        if (active) {
+          setTeamLoading(false);
+        }
+      }
+    };
+
+    loadTeamMembers();
+    return () => {
+      active = false;
+    };
+  }, [currentWorkspaceId]);
 
   const getErrorMessage = (err, fallback) => {
     const raw = err?.message ?? fallback;
@@ -43,43 +98,37 @@ export default function BranchCreateScreen({ navigation }) {
     return fallback;
   };
 
-  const handleFindManager = async () => {
-    const email = managerEmail.trim().toLowerCase();
-    if (!email) {
-      Alert.alert('Validation Error', 'Enter manager email first');
+  const filteredMembers = sortMembers(
+    teamMembers.filter((member) => {
+      const query = managerQuery.trim().toLowerCase();
+      if (!query) return true;
+      return (
+        String(member?.name || '').toLowerCase().includes(query) ||
+        String(member?.email || '').toLowerCase().includes(query)
+      );
+    }),
+  );
+
+  const managerCount = teamMembers.filter((member) => member.role === 'manager').length;
+  const selectableManagers = filteredMembers.filter((member) => member.role === 'manager');
+
+  const handleSelectManager = (member) => {
+    if (member.role !== 'manager') {
+      Alert.alert('Manager required', 'Only workspace team members with the manager role can be assigned to a branch.');
       return;
     }
 
-    if (!currentWorkspaceId) {
-      Alert.alert('Workspace required', 'Please select a workspace before assigning manager');
-      return;
-    }
+    setSelectedManager(member);
+    setManagerQuery(member.email);
+  };
 
-    setManagerSearchLoading(true);
-    setManagerSearchMessage('');
-    setManagerSearchState('idle');
-    try {
-      let user;
-      try {
-        user = await api.get(`/workspaces/${currentWorkspaceId}/users/search`, { email });
-      } catch (searchErr) {
-        // Backward-compatible fallback route
-        user = await api.get(`/workspaces/${currentWorkspaceId}/users/email/${encodeURIComponent(email)}`);
-      }
-      setSelectedManager(user);
-      setManagerSearchState('success');
-      setManagerSearchMessage(`Manager selected: ${user.name} (${user.email})`);
-    } catch (err) {
-      setSelectedManager(null);
-      setManagerSearchState('error');
-      setManagerSearchMessage(getErrorMessage(err, 'No user found with this email'));
-    } finally {
-      setManagerSearchLoading(false);
-    }
+  const clearSelectedManager = () => {
+    setSelectedManager(null);
+    setManagerQuery('');
   };
 
   const handleCreateBranch = async () => {
-    if (!branchName || !location) {
+    if (!branchName.trim() || !location.trim()) {
       Alert.alert('Validation Error', 'Please fill in branch name and location');
       return;
     }
@@ -89,22 +138,21 @@ export default function BranchCreateScreen({ navigation }) {
       return;
     }
 
+    if (selectedManager && selectedManager.role !== 'manager') {
+      Alert.alert('Manager required', 'Please select a team member who already has the manager role.');
+      return;
+    }
+
     setLoading(true);
     try {
-      if (managerEmail.trim() && !selectedManager) {
-        Alert.alert('Manager required', 'Please find and select a valid manager account before creating the branch');
-        setLoading(false);
-        return;
-      }
-
       await api.post('/workspaces', {
         name: branchName.trim(),
-        description: [location, phone, address].filter(Boolean).join(' | '),
+        description: [location.trim(), phone.trim(), address.trim()].filter(Boolean).join(' | '),
         parentWorkspaceId: currentWorkspaceId,
         managerUserId: selectedManager?.id,
       });
 
-      Alert.alert('Branch Created', `${branchName} - ${location}`, [
+      Alert.alert('Branch Created', `${branchName.trim()} - ${location.trim()}`, [
         {
           text: 'OK',
           onPress: () => {
@@ -119,18 +167,13 @@ export default function BranchCreateScreen({ navigation }) {
         return;
       }
       if (!err?.response) {
-        if (managerEmail.trim() && !selectedManager) {
-          Alert.alert('Manager required', 'Manager lookup needs internet. Clear the manager field or reconnect first.');
-          return;
-        }
-
         const localId = `local_branch_${Date.now()}_${Math.random().toString(16).slice(2)}`;
         const localBranch = {
           id: localId,
           local_id: localId,
           server_id: null,
           name: branchName.trim(),
-          description: [location, phone, address].filter(Boolean).join(' | '),
+          description: [location.trim(), phone.trim(), address.trim()].filter(Boolean).join(' | '),
           parentWorkspaceId: currentWorkspaceId,
           managerUser: selectedManager
             ? {
@@ -198,17 +241,19 @@ export default function BranchCreateScreen({ navigation }) {
     >
       <ScrollView
         style={[styles.container, { backgroundColor: theme.colors.background }]}
-        contentContainerStyle={{ padding: 16 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+        keyboardShouldPersistTaps="handled"
       >
-        {/* Header */}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <Title>Create Branch</Title>
+        <View style={styles.header}>
+          <View style={{ flex: 1 }}>
+            <Title>Create Branch</Title>
+            <Subtle>Set branch details, then assign one of your existing workspace managers.</Subtle>
+          </View>
           <TouchableOpacity onPress={() => navigation.goBack()}>
             <MaterialIcons name="close" size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
         </View>
 
-        {/* Branch Details Card */}
         <Card style={{ marginBottom: 16 }}>
           <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>Branch Name *</Text>
           <TextInput
@@ -241,8 +286,21 @@ export default function BranchCreateScreen({ navigation }) {
             value={location}
             onChangeText={setLocation}
           />
+        </Card>
 
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8, marginTop: 12 }}>Branch Manager Email</Text>
+        <Card style={{ marginBottom: 16 }}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: theme.colors.textPrimary, fontSize: 15, fontWeight: '700' }}>Branch Manager</Text>
+              <Subtle>{managerCount} manager{managerCount === 1 ? '' : 's'} available from your current workspace team</Subtle>
+            </View>
+            <TouchableOpacity onPress={clearSelectedManager} disabled={!selectedManager}>
+              <Text style={{ color: selectedManager ? theme.colors.primary : theme.colors.textSecondary, fontWeight: '700' }}>
+                Clear
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           <TextInput
             style={[
               styles.input,
@@ -252,80 +310,114 @@ export default function BranchCreateScreen({ navigation }) {
                 borderColor: theme.colors.border,
               },
             ]}
-            placeholder="manager@email.com"
+            placeholder="Search team members by name or email"
             placeholderTextColor={theme.colors.textSecondary}
-            value={managerEmail}
-            onChangeText={(value) => {
-              setManagerEmail(value);
-              setSelectedManager(null);
-              setManagerSearchMessage('');
-              setManagerSearchState('idle');
-            }}
+            value={managerQuery}
+            onChangeText={setManagerQuery}
             autoCapitalize="none"
             keyboardType="email-address"
           />
-          <AppButton
-            title={managerSearchLoading ? 'Checking…' : 'Find Manager'}
-            icon="person-search"
-            variant="secondary"
-            onPress={handleFindManager}
-            loading={managerSearchLoading}
-            style={styles.findManagerButton}
-          />
-          {managerSearchMessage ? (
-            <View style={[
-              styles.searchStatus,
-              {
-                borderColor: managerSearchState === 'success' ? theme.colors.success : theme.colors.error,
-                backgroundColor: managerSearchState === 'success' ? `${theme.colors.success}15` : `${theme.colors.error}15`,
-              },
-            ]}>
-              <MaterialIcons
-                name={managerSearchState === 'success' ? 'check-circle' : 'error'}
-                size={16}
-                color={managerSearchState === 'success' ? theme.colors.success : theme.colors.error}
-              />
-              <Text style={{
-                flex: 1,
-                marginLeft: 8,
-                color: managerSearchState === 'success' ? theme.colors.success : theme.colors.error,
-                fontSize: 12,
-                fontWeight: '600',
-              }}>
-                {managerSearchMessage}
-              </Text>
-            </View>
-          ) : null}
+
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginTop: 6 }}>
+            Only team members with the manager role can be assigned. Update their role in Team Management first if needed.
+          </Text>
+
           {selectedManager ? (
-            <View style={[styles.managerCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.card }]}> 
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>{selectedManager.name}</Text>
-                  <Text style={{ color: theme.colors.textSecondary }}>{selectedManager.email}</Text>
-                </View>
-                <View style={{
-                  borderRadius: 999,
-                  paddingHorizontal: 10,
-                  paddingVertical: 5,
-                  backgroundColor: selectedManager.alreadyMember ? `${theme.colors.success}20` : `${theme.colors.warning}20`,
-                }}>
-                  <Text style={{
-                    color: selectedManager.alreadyMember ? theme.colors.success : theme.colors.warning,
-                    fontSize: 11,
-                    fontWeight: '700',
-                  }}>
-                    {selectedManager.alreadyMember ? 'Member' : 'Will be added'}
-                  </Text>
-                </View>
+            <View style={[styles.selectedManagerCard, { borderColor: theme.colors.success, backgroundColor: `${theme.colors.success}10` }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>{selectedManager.name}</Text>
+                <Text style={{ color: theme.colors.textSecondary }}>{selectedManager.email}</Text>
+              </View>
+              <View style={[styles.roleBadge, { backgroundColor: `${theme.colors.success}18` }]}>
+                <Text style={{ color: theme.colors.success, fontSize: 11, fontWeight: '700' }}>Manager selected</Text>
               </View>
             </View>
           ) : null}
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginTop: 6 }}>
-            Manager should already have a BizRecord account and will sign in with their own email and password.
-          </Text>
+
+          {teamLoading ? (
+            <View style={styles.loadingWrap}>
+              <ActivityIndicator color={theme.colors.primary} />
+              <Text style={{ color: theme.colors.textSecondary, marginTop: 10 }}>Loading workspace team members...</Text>
+            </View>
+          ) : null}
+
+          {!teamLoading && teamError ? (
+            <View style={[styles.infoBox, { borderColor: theme.colors.error, backgroundColor: `${theme.colors.error}10` }]}>
+              <Text style={{ color: theme.colors.error, fontSize: 12, fontWeight: '600' }}>{teamError}</Text>
+            </View>
+          ) : null}
+
+          {!teamLoading && !teamError && teamMembers.length === 0 ? (
+            <EmptyState
+              icon="group"
+              title="No team members found"
+              subtitle="Add managers in Team Management before assigning one to a branch."
+              style={{ paddingBottom: 8 }}
+            />
+          ) : null}
+
+          {!teamLoading && !teamError && teamMembers.length > 0 && filteredMembers.length === 0 ? (
+            <EmptyState
+              icon="person-search"
+              title="No matches"
+              subtitle="Try a different name or email."
+              style={{ paddingBottom: 8 }}
+            />
+          ) : null}
+
+          {!teamLoading && !teamError && filteredMembers.length > 0 ? (
+            <View style={{ marginTop: 12 }}>
+              {filteredMembers.slice(0, 8).map((member) => {
+                const isManager = member.role === 'manager';
+                const isSelected = selectedManager?.id === member.id;
+                return (
+                  <TouchableOpacity
+                    key={member.id}
+                    onPress={() => handleSelectManager(member)}
+                    style={[
+                      styles.memberRow,
+                      {
+                        borderColor: isSelected ? theme.colors.primary : theme.colors.border,
+                        backgroundColor: isSelected ? `${theme.colors.primary}10` : theme.colors.card,
+                        opacity: isManager ? 1 : 0.68,
+                      },
+                    ]}
+                  >
+                    <View style={{ flex: 1, paddingRight: 12 }}>
+                      <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>{member.name}</Text>
+                      <Text style={{ color: theme.colors.textSecondary, marginTop: 2 }}>{member.email}</Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <View style={[styles.roleBadge, { backgroundColor: isManager ? `${theme.colors.success}18` : `${theme.colors.warning}18` }]}>
+                        <Text style={{ color: isManager ? theme.colors.success : theme.colors.warning, fontSize: 11, fontWeight: '700' }}>
+                          {member.role}
+                        </Text>
+                      </View>
+                      <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginTop: 6 }}>
+                        {isManager ? (isSelected ? 'Assigned' : 'Tap to assign') : 'Promote in Team Management'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : null}
+
+          {!teamLoading && !teamError && filteredMembers.length > 8 ? (
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginTop: 10 }}>
+              Showing the first 8 matches. Refine your search to narrow the list.
+            </Text>
+          ) : null}
+
+          {!teamLoading && !teamError && teamMembers.length > 0 && selectableManagers.length === 0 && managerQuery.trim() ? (
+            <View style={[styles.infoBox, { borderColor: theme.colors.warning, backgroundColor: `${theme.colors.warning}10` }]}>
+              <Text style={{ color: theme.colors.warning, fontSize: 12, fontWeight: '600' }}>
+                Matching team members were found, but none of them currently have the manager role.
+              </Text>
+            </View>
+          ) : null}
         </Card>
 
-        {/* Contact Information Card */}
         <Card style={{ marginBottom: 16 }}>
           <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>Phone Number</Text>
           <TextInput
@@ -364,9 +456,8 @@ export default function BranchCreateScreen({ navigation }) {
           />
         </Card>
 
-        {/* Submit Button */}
         <AppButton
-          title={loading ? 'Creating…' : 'Create Branch'}
+          title={loading ? 'Creating...' : 'Create Branch'}
           icon="add-location-alt"
           variant="primary"
           onPress={handleCreateBranch}
@@ -396,9 +487,22 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    gap: 12,
+  },
   input: {
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 12,
     fontSize: 14,
   },
@@ -406,23 +510,38 @@ const styles = StyleSheet.create({
     height: 100,
     textAlignVertical: 'top',
   },
-  findManagerButton: {
-    marginTop: 10,
-  },
-  managerCard: {
-    marginTop: 10,
+  selectedManagerCard: {
+    marginTop: 12,
     borderWidth: 1,
-    borderRadius: 8,
-    padding: 10,
-  },
-  searchStatus: {
-    marginTop: 10,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderRadius: 12,
+    padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  memberRow: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  roleBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  infoBox: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  loadingWrap: {
+    paddingVertical: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   submitButton: {
     marginTop: 8,

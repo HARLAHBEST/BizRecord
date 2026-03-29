@@ -46,7 +46,10 @@ export default function RegisterScreen({ navigation }) {
     try {
       const response = await register({ name: name.trim(), phone: phone.trim(), email: email.trim(), password });
       if (response?.requiresEmailVerification) {
-        navigation.navigate('VerifyEmail', { email: email.trim() });
+        navigation.replace('VerifyEmail', {
+          email: response?.email || email.trim(),
+          fromRegistration: true,
+        });
       }
     } catch (err) {
       setError(err?.message || 'Unable to register');
