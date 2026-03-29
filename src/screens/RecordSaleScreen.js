@@ -16,38 +16,52 @@ import { api } from '../api/client';
 import {
   cacheCustomers,
   cacheInventory,
-  getServerId,
   getCachedCustomers,
   getCachedInventory,
+  getLocalIdByServerId,
+  getServerId,
   setIdMapping,
+  upsertLocalInventory,
   upsertLocalTransaction,
-  addSyncOutboxAction,
 } from '../storage/offlineStore';
 import { Card, Title, SkeletonBlock, EmptyState } from '../components/UI';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useCustomerSelect } from '../context/CustomerSelectContext';
 import { useFocusEffect } from '@react-navigation/native';
 
+const PAYMENT_OPTIONS = [
+  { id: 'sale', label: 'Cash sale', paymentMethod: 'cash' },
+  { id: 'debt', label: 'Mark as debt', paymentMethod: 'credit' },
+];
+
+const formatMoney = (value) => `NGN ${Number(value || 0).toLocaleString()}`;
 
 export default function RecordSaleScreen({ navigation, route }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
   const { currentWorkspaceId, queueAction } = useWorkspace();
+  const { selectedCustomer, setSelectedCustomer } = useCustomerSelect();
 
   const cartItems = route?.params?.cart ?? [];
   const isCartMode = cartItems.length > 0;
+  const cartTotal = cartItems.reduce(
+    (sum, item) => sum + Number(item.quantity || 0) * Number(item.sellingPrice || 0),
+    0,
+  );
 
-  const cartTotal = cartItems.reduce((sum, item) => sum + item.quantity * (item.sellingPrice || 0), 0);
-
-  // Single sale mode fields
   const [inventoryItems, setInventoryItems] = useState([]);
   const [selectedItemId, setSelectedItemId] = useState('');
   const [quantity, setQuantity] = useState('');
-
-  // Shared fields
-  const { selectedCustomer, setSelectedCustomer } = useCustomerSelect();
-  const customerId = selectedCustomer ? selectedCustomer.id : '';
   const [customers, setCustomers] = useState([]);
+  const [notes, setNotes] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [saleMode, setSaleMode] = useState('sale');
+  const [dueInDays, setDueInDays] = useState('7');
+  const [itemQuery, setItemQuery] = useState('');
+
+  const customerId = selectedCustomer ? selectedCustomer.id : '';
+
   const loadCustomers = useCallback(async () => {
     if (!currentWorkspaceId) {
       setCustomers([]);
@@ -69,34 +83,6 @@ export default function RecordSaleScreen({ navigation, route }) {
       loadCustomers();
     }, [loadCustomers]),
   );
-  const [notes, setNotes] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [inventoryLoading, setInventoryLoading] = useState(false);
-
-  const selectedItem = useMemo(
-    () => inventoryItems.find((item) => item.id === selectedItemId) || null,
-    [inventoryItems, selectedItemId],
-  );
-  const unitPrice = Number(selectedItem?.sellingPrice || 0);
-
-  const resolveSalePayload = useCallback(async (payload) => {
-    const selectedCustomerRecord = customers.find((c) => c.id === customerId) || selectedCustomer || null;
-    const nextPayload = {
-      ...payload,
-      customerId: customerId || undefined,
-      customerName: selectedCustomerRecord?.name || payload.customerName || undefined,
-      phone: selectedCustomerRecord?.phone || payload.phone || undefined,
-    };
-
-    if (nextPayload.itemId && String(nextPayload.itemId).startsWith('local_')) {
-      const mappedItemId = await getServerId('inventory', String(nextPayload.itemId));
-      if (mappedItemId) {
-        nextPayload.itemId = mappedItemId;
-      }
-    }
-
-    return nextPayload;
-  }, [customerId, customers, selectedCustomer]);
 
   React.useEffect(() => {
     const loadInventory = async () => {
@@ -120,61 +106,191 @@ export default function RecordSaleScreen({ navigation, route }) {
     loadInventory();
   }, [currentWorkspaceId]);
 
+  const selectedItem = useMemo(
+    () => inventoryItems.find((item) => String(item.id) === String(selectedItemId)) || null,
+    [inventoryItems, selectedItemId],
+  );
+
+  const filteredInventory = useMemo(() => {
+    const query = itemQuery.trim().toLowerCase();
+    if (!query) return inventoryItems;
+    return inventoryItems.filter((item) => {
+      const haystack = [
+        item?.name,
+        item?.sku,
+        item?.category,
+        item?.location,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [inventoryItems, itemQuery]);
+
+  const selectedCustomerRecord = useMemo(
+    () => customers.find((item) => String(item.id) === String(customerId)) || selectedCustomer || null,
+    [customerId, customers, selectedCustomer],
+  );
+
+  const unitPrice = Number(selectedItem?.sellingPrice || 0);
+  const quantityNumber = Number(quantity || 0);
+  const dueDate =
+    saleMode === 'debt' && dueInDays
+      ? new Date(Date.now() + Number(dueInDays || 0) * 86400000).toISOString()
+      : undefined;
+
+  const applyLocalInventoryDelta = useCallback(
+    async (itemId, soldQuantity) => {
+      if (!currentWorkspaceId || !itemId || !soldQuantity) return;
+      const amount = Number(soldQuantity || 0);
+      if (!amount) return;
+
+      setInventoryItems((prev) =>
+        prev.map((item) => {
+          if (String(item.id) !== String(itemId)) return item;
+          const nextQuantity = Math.max(0, Number(item.quantity || 0) - amount);
+          return {
+            ...item,
+            quantity: nextQuantity,
+            status: nextQuantity > 0 ? item.status || 'available' : 'out_of_stock',
+            updatedAt: new Date().toISOString(),
+          };
+        }),
+      );
+
+      const cached = await getCachedInventory(currentWorkspaceId);
+      const matched = cached.find((item) => String(item.id) === String(itemId));
+      if (!matched) return;
+
+      const nextQuantity = Math.max(0, Number(matched.quantity || 0) - amount);
+      const updatedItem = {
+        ...matched,
+        quantity: nextQuantity,
+        status: nextQuantity > 0 ? matched.status || 'available' : 'out_of_stock',
+        updatedAt: new Date().toISOString(),
+      };
+      const localId =
+        matched.local_id ||
+        (String(itemId).startsWith('local_')
+          ? String(itemId)
+          : await getLocalIdByServerId('inventory', itemId, currentWorkspaceId)) ||
+        String(itemId);
+
+      await upsertLocalInventory(
+        {
+          local_id: localId,
+          server_id: String(itemId).startsWith('local_') ? null : String(itemId),
+          workspace_server_id: currentWorkspaceId,
+          data: updatedItem,
+          sync_status: matched.sync_status || 'synced',
+          updated_at_local: Date.now(),
+        },
+        currentWorkspaceId,
+      );
+    },
+    [currentWorkspaceId],
+  );
+
+  const resolvePayload = useCallback(
+    async (payload) => {
+      const nowIso = new Date().toISOString();
+      const nextPayload = {
+        ...payload,
+        customerId: customerId || undefined,
+        customerName:
+          selectedCustomerRecord?.name || payload.customerName || undefined,
+        phone: selectedCustomerRecord?.phone || payload.phone || undefined,
+        createdAt: payload.createdAt || nowIso,
+        updatedAt: nowIso,
+      };
+
+      if (nextPayload.itemId && String(nextPayload.itemId).startsWith('local_')) {
+        const mappedItemId = await getServerId('inventory', String(nextPayload.itemId));
+        if (mappedItemId) {
+          nextPayload.itemId = mappedItemId;
+        }
+      }
+
+      return nextPayload;
+    },
+    [customerId, selectedCustomerRecord],
+  );
+
   const postTransaction = async (payload) => {
     const localId = `local_tx_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    const preparedPayload = await resolveSalePayload(payload);
-    const queueOfflineTransaction = async () => {
-      await upsertLocalTransaction({
-        local_id: localId,
-        server_id: null,
-        workspace_server_id: currentWorkspaceId,
-        data: { ...preparedPayload, local_id: localId },
-        sync_status: 'pending_create',
-      }, currentWorkspaceId);
-      await addSyncOutboxAction({
-        action_id: localId,
-        action_type: 'create_transaction',
-        entity_type: 'transaction',
-        entity_local_id: localId,
-        workspace_ref: currentWorkspaceId,
-        payload: preparedPayload,
-        depends_on_action_id: String(preparedPayload?.itemId || '').startsWith('local_')
-          ? preparedPayload.itemId
-          : null,
+    const preparedPayload = await resolvePayload(payload);
+    const localData = { ...preparedPayload, id: localId, local_id: localId };
+
+    const queueOffline = async () => {
+      await queueAction({
+        method: 'post',
+        path: `/workspaces/${currentWorkspaceId}/transactions`,
+        body: preparedPayload,
       });
     };
 
-    if (String(preparedPayload?.itemId || '').startsWith('local_')) {
-      await queueOfflineTransaction();
-      return;
-    }
-
     try {
-      const result = await api.post(`/workspaces/${currentWorkspaceId}/transactions`, preparedPayload);
-      // Upsert into local SQLite so SalesScreen reflects the new transaction immediately
-      upsertLocalTransaction({
-        local_id: localId,
-        server_id: result?.id ? String(result.id) : null,
-        workspace_server_id: currentWorkspaceId,
-        data: { ...preparedPayload, ...(result || {}), id: result?.id ?? localId, local_id: localId },
-        sync_status: 'synced',
-      }, currentWorkspaceId).catch(() => null);
+      const result = await api.post(
+        `/workspaces/${currentWorkspaceId}/transactions`,
+        preparedPayload,
+      );
+      await upsertLocalTransaction(
+        {
+          local_id: localId,
+          server_id: result?.id ? String(result.id) : null,
+          workspace_server_id: currentWorkspaceId,
+          data: {
+            ...localData,
+            ...(result || {}),
+            id: result?.id ?? localId,
+            local_id: localId,
+          },
+          sync_status: 'synced',
+          updated_at_local: Date.now(),
+        },
+        currentWorkspaceId,
+      );
       if (result?.id) {
-        setIdMapping('transaction', localId, String(result.id)).catch(() => null);
+        await setIdMapping('transaction', localId, String(result.id));
       }
     } catch (err) {
-      const isOffline = !err?.response;
-      if (isOffline) {
-        await queueOfflineTransaction();
+      if (!err?.response && queueAction) {
+        await queueOffline();
       } else {
         throw err;
       }
     }
   };
 
+  const buildTransactionPayload = (item, soldQuantity) => {
+    const numericQuantity = Number(soldQuantity || 0);
+    const itemPrice = Number(item?.sellingPrice || 0);
+    const total = numericQuantity * itemPrice;
+    return {
+      type: saleMode === 'debt' ? 'debt' : 'sale',
+      itemId: item?.id || null,
+      quantity: numericQuantity,
+      unitPrice: itemPrice,
+      totalAmount: total,
+      paymentMethod:
+        PAYMENT_OPTIONS.find((option) => option.id === saleMode)?.paymentMethod ||
+        'cash',
+      customerId: customerId || undefined,
+      customerName: selectedCustomerRecord?.name || undefined,
+      phone: selectedCustomerRecord?.phone || undefined,
+      dueDate,
+      status: saleMode === 'debt' ? 'pending' : 'completed',
+      notes: notes.trim() || item?.name || undefined,
+    };
+  };
+
   const handleSubmit = async () => {
     if (!currentWorkspaceId) {
-      Alert.alert('Workspace required', 'Please select a workspace before recording a sale');
+      Alert.alert(
+        'Workspace required',
+        'Please select a workspace before recording a sale',
+      );
       return;
     }
 
@@ -182,56 +298,51 @@ export default function RecordSaleScreen({ navigation, route }) {
     try {
       if (isCartMode) {
         for (const item of cartItems) {
-          const total = item.quantity * (item.sellingPrice || 0);
-          await postTransaction({
-            type: 'sale',
-            itemId: item.id || null,
-            quantity: item.quantity,
-            unitPrice: item.sellingPrice || 0,
-            totalAmount: total,
-            paymentMethod: 'cash',
-            customerId: customerId || undefined,
-            notes: notes || item.name,
-          });
-        }
-        const customerName = customers.find(c => c.id === customerId)?.name || 'Walk-in';
-        Alert.alert(
-          'Sale recorded',
-          `${cartItems.length} item(s) — ₦${cartTotal.toLocaleString()}\nCustomer: ${customerName}`,
-          [{ text: 'OK', onPress: () => navigation.goBack() }],
-        );
-      } else {
-        if (!selectedItem || !quantity) {
-          Alert.alert('Validation Error', 'Please select item and quantity');
-          setLoading(false);
-          return;
+          const availableStock = Number(item.quantityAvailable || item.availableQuantity || item.stock || item.currentStock || item.inStock || item.remainingStock || item.quantityOnHand || item.originalQuantity || item.quantity || 0);
+          if (availableStock && Number(item.quantity || 0) > availableStock) {
+            throw new Error(`Insufficient stock for ${item.name}. Available: ${availableStock}`);
+          }
+          await postTransaction(buildTransactionPayload(item, item.quantity));
+          await applyLocalInventoryDelta(item.id, item.quantity);
         }
 
-        const qtyNum = parseFloat(quantity);
-        if (!qtyNum || qtyNum <= 0) {
-          Alert.alert('Validation Error', 'Quantity must be greater than zero');
-          setLoading(false);
-          return;
-        }
-
-        const total = unitPrice * qtyNum;
-        await postTransaction({
-          type: 'sale',
-          itemId: selectedItem.id,
-          quantity: qtyNum,
-          unitPrice,
-          totalAmount: total,
-          paymentMethod: 'cash',
-          customerId: customerId || undefined,
-          notes: notes || selectedItem.name,
-        });
-        const customerName = customers.find(c => c.id === customerId)?.name || 'Walk-in';
         Alert.alert(
-          'Sale recorded',
-          `${qtyNum} × ${selectedItem.name} = ₦${total.toLocaleString()}\nCustomer: ${customerName}`,
+          saleMode === 'debt' ? 'Debt sale recorded' : 'Sale recorded',
+          `${cartItems.length} item(s) total ${formatMoney(cartTotal)}\nCustomer: ${selectedCustomerRecord?.name || 'Walk-in'}`,
           [{ text: 'OK', onPress: () => navigation.goBack() }],
         );
+        return;
       }
+
+      if (!selectedItem || !quantity) {
+        Alert.alert('Validation Error', 'Please select an item and quantity');
+        return;
+      }
+
+      if (!quantityNumber || quantityNumber <= 0) {
+        Alert.alert('Validation Error', 'Quantity must be greater than zero');
+        return;
+      }
+
+      const availableStock = Number(selectedItem.quantity || 0);
+      if (quantityNumber > availableStock) {
+        Alert.alert(
+          'Insufficient stock',
+          `Only ${availableStock} unit(s) are currently available.`,
+        );
+        return;
+      }
+
+      await postTransaction(buildTransactionPayload(selectedItem, quantityNumber));
+      await applyLocalInventoryDelta(selectedItem.id, quantityNumber);
+
+      Alert.alert(
+        saleMode === 'debt' ? 'Debt sale recorded' : 'Sale recorded',
+        `${quantityNumber} x ${selectedItem.name} = ${formatMoney(
+          unitPrice * quantityNumber,
+        )}\nCustomer: ${selectedCustomerRecord?.name || 'Walk-in'}`,
+        [{ text: 'OK', onPress: () => navigation.goBack() }],
+      );
     } catch (err) {
       Alert.alert('Error', err?.message || 'Unable to record sale');
     } finally {
@@ -247,28 +358,92 @@ export default function RecordSaleScreen({ navigation, route }) {
       <ScrollView
         style={[styles.container, { backgroundColor: theme.colors.background }]}
         contentContainerStyle={{ padding: 16 }}
+        keyboardShouldPersistTaps="handled"
         accessibilityLabel="Record Sale screen"
       >
-        {/* Header */}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <View style={styles.header}>
           <Title accessibilityRole="header">Record Sale</Title>
           <TouchableOpacity onPress={() => navigation.goBack()} accessibilityLabel="Close">
-            <MaterialIcons name="close" size={24} color={theme.colors.textPrimary} />
+            <MaterialIcons
+              name="close"
+              size={24}
+              color={theme.colors.textPrimary}
+            />
           </TouchableOpacity>
         </View>
 
-        {/* Item Details Card */}
-        {/* Cart Summary (cart mode) or Manual Single-Item Entry */}
+        <Card style={{ marginBottom: 16 }}>
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 10 }}>
+            Sale Type
+          </Text>
+          <View style={styles.modeRow}>
+            {PAYMENT_OPTIONS.map((option) => {
+              const selected = saleMode === option.id;
+              return (
+                <TouchableOpacity
+                  key={option.id}
+                  onPress={() => setSaleMode(option.id)}
+                  style={[
+                    styles.modeButton,
+                    {
+                      backgroundColor: selected
+                        ? theme.colors.primary
+                        : theme.colors.card,
+                      borderColor: selected
+                        ? theme.colors.primary
+                        : theme.colors.border,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      color: selected ? '#fff' : theme.colors.textPrimary,
+                      fontWeight: '600',
+                    }}
+                  >
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {saleMode === 'debt' ? (
+            <View style={{ marginTop: 12 }}>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>
+                Due in (days)
+              </Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: theme.colors.card,
+                    color: theme.colors.textPrimary,
+                    borderColor: theme.colors.border,
+                  },
+                ]}
+                placeholder="7"
+                placeholderTextColor={theme.colors.textSecondary}
+                keyboardType="number-pad"
+                value={dueInDays}
+                onChangeText={setDueInDays}
+              />
+            </View>
+          ) : null}
+        </Card>
+
         {loading || inventoryLoading ? (
           <View style={{ marginBottom: 16 }}>
             <SkeletonBlock height={22} width="40%" style={{ marginBottom: 14, borderRadius: 8 }} />
             <SkeletonBlock height={70} style={{ marginBottom: 14, borderRadius: 12 }} />
             <SkeletonBlock height={70} style={{ marginBottom: 14, borderRadius: 12 }} />
-            <SkeletonBlock height={70} style={{ marginBottom: 14, borderRadius: 12 }} />
+            <SkeletonBlock height={70} style={{ borderRadius: 12 }} />
           </View>
         ) : isCartMode ? (
           <Card style={{ marginBottom: 16 }}>
-            <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 12 }}>Items in this sale</Text>
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 12 }}>
+              Items in this transaction
+            </Text>
             {cartItems.map((item, index) => (
               <View
                 key={item.id || index}
@@ -282,59 +457,113 @@ export default function RecordSaleScreen({ navigation, route }) {
                 }}
               >
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>{item.name}</Text>
+                  <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>
+                    {item.name}
+                  </Text>
                   <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>
-                    {item.quantity} × ₦{(item.sellingPrice || 0).toLocaleString()}
+                    {item.quantity} x {formatMoney(item.sellingPrice || 0)}
                   </Text>
                 </View>
                 <Text style={{ color: theme.colors.primary, fontWeight: '700' }}>
-                  ₦{(item.quantity * (item.sellingPrice || 0)).toLocaleString()}
+                  {formatMoney(
+                    Number(item.quantity || 0) * Number(item.sellingPrice || 0),
+                  )}
                 </Text>
               </View>
             ))}
-            <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.border, flexDirection: 'row', justifyContent: 'space-between' }}>
-              <Text style={{ color: theme.colors.textSecondary, fontWeight: '600' }}>Total</Text>
-              <Text style={{ color: theme.colors.primary, fontWeight: '700', fontSize: 18 }}>₦{cartTotal.toLocaleString()}</Text>
+            <View style={styles.totalRow}>
+              <Text style={{ color: theme.colors.textSecondary, fontWeight: '600' }}>
+                Total
+              </Text>
+              <Text style={{ color: theme.colors.primary, fontWeight: '700', fontSize: 18 }}>
+                {formatMoney(cartTotal)}
+              </Text>
             </View>
           </Card>
         ) : (
           <Card style={{ marginBottom: 16 }}>
-            <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>Select Item *</Text>
-            <View style={[styles.itemsWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.card }]}> 
-              {inventoryItems.length === 0 ? (
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>
+              Find Goods
+            </Text>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  backgroundColor: theme.colors.card,
+                  color: theme.colors.textPrimary,
+                  borderColor: theme.colors.border,
+                },
+              ]}
+              placeholder="Search by name, SKU, category or location"
+              placeholderTextColor={theme.colors.textSecondary}
+              value={itemQuery}
+              onChangeText={setItemQuery}
+            />
+
+            <Text
+              style={{
+                color: theme.colors.textSecondary,
+                fontSize: 12,
+                marginTop: 12,
+                marginBottom: 8,
+              }}
+            >
+              Select Item *
+            </Text>
+            <View
+              style={[
+                styles.itemsWrap,
+                { borderColor: theme.colors.border, backgroundColor: theme.colors.card },
+              ]}
+            >
+              {filteredInventory.length === 0 ? (
                 <EmptyState
                   icon="inventory"
-                  title="No inventory items"
-                  subtitle="Add inventory items to record sales."
+                  title="No matching goods"
+                  subtitle="Try another search or add inventory first."
                   style={{ marginVertical: 16 }}
-                  ctaLabel="Add Item"
-                  onCtaPress={() => navigation.navigate('AddItemScreen')}
-                  accessibilityLabel="No inventory items. Add inventory to record sales."
                 />
               ) : (
-                inventoryItems.map((item) => {
-                  const selected = selectedItemId === item.id;
+                filteredInventory.map((item) => {
+                  const selected = String(selectedItemId) === String(item.id);
+                  const availableStock = Number(item.quantity || 0);
                   return (
                     <TouchableOpacity
                       key={item.id}
                       style={[
                         styles.itemOption,
                         {
-                          borderColor: selected ? theme.colors.primary : theme.colors.border,
-                          backgroundColor: selected ? `${theme.colors.primary}15` : 'transparent',
+                          borderColor: selected
+                            ? theme.colors.primary
+                            : theme.colors.border,
+                          backgroundColor: selected
+                            ? `${theme.colors.primary}15`
+                            : 'transparent',
                         },
                       ]}
-                      onPress={() => setSelectedItemId(item.id)}
-                      accessibilityLabel={`Select item ${item.name}`}
+                      onPress={() => setSelectedItemId(String(item.id))}
                       activeOpacity={0.7}
                     >
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>{item.name}</Text>
-                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>
-                          Stock: {Number(item.quantity || 0)} • Price: ₦{Number(item.sellingPrice || 0).toLocaleString()}
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>
+                          {item.name}
                         </Text>
+                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                          Stock: {availableStock} | Price: {formatMoney(item.sellingPrice || 0)}
+                        </Text>
+                        {(item.sku || item.category) ? (
+                          <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                            {[item.sku, item.category].filter(Boolean).join(' | ')}
+                          </Text>
+                        ) : null}
                       </View>
-                      {selected ? <MaterialIcons name="check-circle" size={18} color={theme.colors.primary} /> : null}
+                      {selected ? (
+                        <MaterialIcons
+                          name="check-circle"
+                          size={18}
+                          color={theme.colors.primary}
+                        />
+                      ) : null}
                     </TouchableOpacity>
                   );
                 })
@@ -343,7 +572,9 @@ export default function RecordSaleScreen({ navigation, route }) {
 
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>Quantity *</Text>
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>
+                  Quantity *
+                </Text>
                 <TextInput
                   style={[
                     styles.input,
@@ -358,11 +589,12 @@ export default function RecordSaleScreen({ navigation, route }) {
                   keyboardType="number-pad"
                   value={quantity}
                   onChangeText={setQuantity}
-                  accessibilityLabel="Quantity"
                 />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>Price per unit (₦)</Text>
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>
+                  Price per unit
+                </Text>
                 <View
                   style={[
                     styles.input,
@@ -372,46 +604,86 @@ export default function RecordSaleScreen({ navigation, route }) {
                       justifyContent: 'center',
                     },
                   ]}
-                  accessible accessibilityLabel="Unit price"
                 >
                   <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>
-                    ₦{unitPrice.toLocaleString()}
+                    {formatMoney(unitPrice)}
                   </Text>
                 </View>
               </View>
             </View>
 
-            {quantity && selectedItem && (
-              <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <Text style={{ color: theme.colors.textSecondary }}>Total:</Text>
-                  <Text style={{ color: theme.colors.primary, fontWeight: '700', fontSize: 16 }}>
-                    ₦{(unitPrice * (parseFloat(quantity) || 0)).toLocaleString()}
+            {selectedItem ? (
+              <View style={styles.totalRow}>
+                <View>
+                  <Text style={{ color: theme.colors.textSecondary }}>
+                    Available stock
+                  </Text>
+                  <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', marginTop: 4 }}>
+                    {Number(selectedItem.quantity || 0)}
+                  </Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={{ color: theme.colors.textSecondary }}>Total</Text>
+                  <Text style={{ color: theme.colors.primary, fontWeight: '700', fontSize: 16, marginTop: 4 }}>
+                    {formatMoney(unitPrice * (quantityNumber || 0))}
                   </Text>
                 </View>
               </View>
-            )}
+            ) : null}
           </Card>
         )}
 
-        {/* Customer & Notes Card */}
         <Card style={{ marginBottom: 16 }}>
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>Customer</Text>
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>
+            Customer
+          </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
             <TouchableOpacity
-              style={{ flex: 1, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, padding: 10, backgroundColor: theme.colors.card }}
+              style={{
+                flex: 1,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+                borderRadius: 8,
+                padding: 10,
+                backgroundColor: theme.colors.card,
+              }}
               onPress={() => navigation.navigate('CustomerListScreen', { selectMode: true })}
             >
-              <Text style={{ color: customerId ? theme.colors.textPrimary : theme.colors.textSecondary }}>
-                {customerId ? (customers.find(c => c.id === customerId)?.name || 'Select customer') : 'Select customer'}
+              <Text
+                style={{
+                  color: customerId
+                    ? theme.colors.textPrimary
+                    : theme.colors.textSecondary,
+                }}
+              >
+                {customerId
+                  ? selectedCustomerRecord?.name || 'Select customer'
+                  : 'Select customer'}
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate('AddCustomerScreen', { selectAfterCreate: true })} style={{ marginLeft: 8 }}>
-              <MaterialIcons name="person-add" size={24} color={theme.colors.primary} />
+            <TouchableOpacity
+              onPress={() => navigation.navigate('AddCustomerScreen', { selectAfterCreate: true })}
+              style={{ marginLeft: 8 }}
+            >
+              <MaterialIcons
+                name="person-add"
+                size={24}
+                color={theme.colors.primary}
+              />
             </TouchableOpacity>
+            {customerId ? (
+              <TouchableOpacity
+                onPress={() => setSelectedCustomer?.(null)}
+                style={{ marginLeft: 8 }}
+              >
+                <MaterialIcons name="clear" size={22} color={theme.colors.textSecondary} />
+              </TouchableOpacity>
+            ) : null}
           </View>
 
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8, marginTop: 12 }}>Notes</Text>
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8, marginTop: 12 }}>
+            Notes
+          </Text>
           <TextInput
             style={[
               styles.input,
@@ -433,21 +705,38 @@ export default function RecordSaleScreen({ navigation, route }) {
 
         <View style={styles.actionRow}>
           <TouchableOpacity
-            style={[styles.cancelButton, { borderColor: theme.colors.border, backgroundColor: theme.colors.card }]}
+            style={[
+              styles.cancelButton,
+              {
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.card,
+              },
+            ]}
             onPress={() => navigation.goBack()}
             disabled={loading}
           >
-            <Text style={{ color: theme.colors.textSecondary, fontWeight: '600' }}>Cancel</Text>
+            <Text style={{ color: theme.colors.textSecondary, fontWeight: '600' }}>
+              Cancel
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.submitButton, { backgroundColor: theme.colors.primary, opacity: loading ? 0.7 : 1 }]}
+            style={[
+              styles.submitButton,
+              { backgroundColor: theme.colors.primary, opacity: loading ? 0.7 : 1 },
+            ]}
             onPress={handleSubmit}
             disabled={loading}
           >
             <MaterialIcons name="check-circle" size={20} color="#fff" />
             <Text style={{ color: '#fff', fontWeight: '600', marginLeft: 8 }}>
-              {loading ? 'Recording…' : isCartMode ? `Complete Sale (${cartItems.length} item${cartItems.length !== 1 ? 's' : ''})` : 'Record Sale'}
+              {loading
+                ? 'Recording...'
+                : isCartMode
+                  ? `${saleMode === 'debt' ? 'Save Debt Sale' : 'Complete Sale'} (${cartItems.length})`
+                  : saleMode === 'debt'
+                    ? 'Save Debt Sale'
+                    : 'Record Sale'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -460,6 +749,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
   input: {
     borderWidth: 1,
     borderRadius: 8,
@@ -470,11 +765,24 @@ const styles = StyleSheet.create({
     height: 100,
     textAlignVertical: 'top',
   },
+  modeRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  modeButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   itemsWrap: {
     borderWidth: 1,
     borderRadius: 10,
     padding: 8,
-    maxHeight: 210,
+    maxHeight: 220,
   },
   itemOption: {
     borderWidth: 1,
@@ -483,6 +791,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 8,
+  },
+  totalRow: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
   },
   actionRow: {
     flexDirection: 'row',
@@ -505,7 +820,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 0,
     flex: 1,
   },
 });

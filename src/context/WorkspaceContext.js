@@ -208,6 +208,14 @@ const LAST_SYNC_STORAGE_KEY = '@booker:lastSyncAt';
 
 const generateId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const generateLocalId = (prefix) => `local_${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+const stampLocalEntityDates = (payload = {}, now = Date.now()) => {
+  const isoNow = new Date(now).toISOString();
+  return {
+    ...payload,
+    createdAt: payload?.createdAt || isoNow,
+    updatedAt: isoNow,
+  };
+};
 
 const parseActionRoute = (path = '') => {
   const inventory = path.match(/^\/workspaces\/([^/]+)\/inventory(?:\/([^/]+))?$/);
@@ -435,11 +443,12 @@ export const WorkspaceProvider = function({ children }) {
           ? action.body.itemId
           : null;
         const upsert = entityType === 'debt' ? offlineStore.upsertLocalDebt : offlineStore.upsertLocalTransaction;
+        const stampedBody = stampLocalEntityDates(action.body || {}, now);
         await upsert({
           local_id: localId,
           server_id: null,
           workspace_server_id: workspaceRef,
-          data: { ...(action.body || {}), local_id: localId, id: localId },
+          data: { ...stampedBody, local_id: localId, id: localId },
           sync_status: 'pending_create',
           updated_at_local: now,
         }, workspaceRef);
@@ -449,7 +458,7 @@ export const WorkspaceProvider = function({ children }) {
           entity_type: entityType,
           entity_local_id: localId,
           workspace_ref: workspaceRef,
-          payload: action.body || {},
+          payload: stampedBody,
           depends_on_action_id: dependsOnActionId,
           created_at: now,
           updated_at: now,

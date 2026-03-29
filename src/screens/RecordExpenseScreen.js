@@ -14,7 +14,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { api } from '../api/client';
 import { setIdMapping, upsertLocalTransaction } from '../storage/offlineStore';
-import { Card, Title, SkeletonBlock, EmptyState } from '../components/UI';
+import { Card, Title, SkeletonBlock } from '../components/UI';
 import { MaterialIcons } from '@expo/vector-icons';
 
 const EXPENSE_CATEGORIES = [
@@ -36,7 +36,6 @@ export default function RecordExpenseScreen({ navigation }) {
   const [description, setDescription] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [notes, setNotes] = useState('');
-
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
@@ -46,40 +45,64 @@ export default function RecordExpenseScreen({ navigation }) {
     }
 
     if (!currentWorkspaceId) {
-      Alert.alert('Workspace required', 'Please select a workspace before recording an expense');
+      Alert.alert(
+        'Workspace required',
+        'Please select a workspace before recording an expense',
+      );
+      return;
+    }
+
+    const parsedAmount = parseFloat(amount);
+    if (!parsedAmount || parsedAmount <= 0) {
+      Alert.alert('Validation Error', 'Enter a valid expense amount');
       return;
     }
 
     const selectedCategory = EXPENSE_CATEGORIES.find((c) => c.id === category);
-
+    const nowIso = new Date().toISOString();
     const payload = {
       type: 'expense',
       quantity: 1,
-      unitPrice: parseFloat(amount),
-      totalAmount: parseFloat(amount),
+      unitPrice: parsedAmount,
+      totalAmount: parsedAmount,
       paymentMethod,
       category,
       notes: description || notes,
+      createdAt: nowIso,
+      updatedAt: nowIso,
     };
 
     setLoading(true);
-    const localId = `local_tx_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const localId = `local_tx_${Date.now()}_${Math.random()
+      .toString(16)
+      .slice(2)}`;
     try {
-      const result = await api.post(`/workspaces/${currentWorkspaceId}/transactions`, payload);
-      await upsertLocalTransaction({
-        local_id: localId,
-        server_id: result?.id ? String(result.id) : null,
-        workspace_server_id: currentWorkspaceId,
-        data: { ...payload, ...(result || {}), id: result?.id ?? localId, local_id: localId },
-        sync_status: 'synced',
-      }, currentWorkspaceId);
+      const result = await api.post(
+        `/workspaces/${currentWorkspaceId}/transactions`,
+        payload,
+      );
+      await upsertLocalTransaction(
+        {
+          local_id: localId,
+          server_id: result?.id ? String(result.id) : null,
+          workspace_server_id: currentWorkspaceId,
+          data: {
+            ...payload,
+            ...(result || {}),
+            id: result?.id ?? localId,
+            local_id: localId,
+          },
+          sync_status: 'synced',
+        },
+        currentWorkspaceId,
+      );
       if (result?.id) {
         await setIdMapping('transaction', localId, String(result.id));
       }
 
       Alert.alert(
         'Expense recorded',
-        `${selectedCategory.label}: ₦${parseFloat(amount).toLocaleString()}\nMethod: ${paymentMethod}`,
+        `${selectedCategory?.label || 'Expense'}: NGN ${parsedAmount.toLocaleString()}\nMethod: ${paymentMethod}`,
         [
           {
             text: 'OK',
@@ -87,10 +110,10 @@ export default function RecordExpenseScreen({ navigation }) {
               navigation.goBack();
             },
           },
-        ]
+        ],
       );
     } catch (err) {
-      if (queueAction) {
+      if (queueAction && !err?.response) {
         await queueAction({
           method: 'post',
           path: `/workspaces/${currentWorkspaceId}/transactions`,
@@ -110,15 +133,31 @@ export default function RecordExpenseScreen({ navigation }) {
     }
   };
 
-
-  // Skeleton loader for loading state
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: theme.colors.background, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
-        <SkeletonBlock height={28} width="60%" style={{ marginBottom: 18, borderRadius: 8 }} />
-        <SkeletonBlock height={90} style={{ marginBottom: 18, borderRadius: 16 }} />
-        <SkeletonBlock height={90} style={{ marginBottom: 18, borderRadius: 16 }} />
-        <SkeletonBlock height={90} style={{ marginBottom: 18, borderRadius: 16 }} />
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: theme.colors.background,
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 24,
+        }}
+      >
+        <SkeletonBlock
+          height={28}
+          width="60%"
+          style={{ marginBottom: 18, borderRadius: 8 }}
+        />
+        <SkeletonBlock
+          height={90}
+          style={{ marginBottom: 18, borderRadius: 16 }}
+        />
+        <SkeletonBlock
+          height={90}
+          style={{ marginBottom: 18, borderRadius: 16 }}
+        />
+        <SkeletonBlock height={90} style={{ borderRadius: 16 }} />
       </View>
     );
   }
@@ -133,17 +172,38 @@ export default function RecordExpenseScreen({ navigation }) {
         contentContainerStyle={{ padding: 16 }}
         accessibilityLabel="Record expense screen"
       >
-        {/* Header */}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <View
+          style={{
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 20,
+          }}
+        >
           <Title accessibilityRole="header">Record Expense</Title>
-          <TouchableOpacity onPress={() => navigation.goBack()} accessibilityLabel="Close record expense screen" activeOpacity={0.7}>
-            <MaterialIcons name="close" size={24} color={theme.colors.textPrimary} />
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            accessibilityLabel="Close record expense screen"
+            activeOpacity={0.7}
+          >
+            <MaterialIcons
+              name="close"
+              size={24}
+              color={theme.colors.textPrimary}
+            />
           </TouchableOpacity>
         </View>
 
-        {/* Category Selection */}
         <Card style={{ marginBottom: 16 }}>
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 12 }}>Category *</Text>
+          <Text
+            style={{
+              color: theme.colors.textSecondary,
+              fontSize: 12,
+              marginBottom: 12,
+            }}
+          >
+            Category *
+          </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
             {EXPENSE_CATEGORIES.map((cat) => (
               <TouchableOpacity
@@ -151,7 +211,10 @@ export default function RecordExpenseScreen({ navigation }) {
                 style={[
                   styles.categoryButton,
                   {
-                    backgroundColor: category === cat.id ? theme.colors.primary : theme.colors.card,
+                    backgroundColor:
+                      category === cat.id
+                        ? theme.colors.primary
+                        : theme.colors.card,
                     borderColor: theme.colors.border,
                   },
                 ]}
@@ -162,11 +225,18 @@ export default function RecordExpenseScreen({ navigation }) {
                 <MaterialIcons
                   name={cat.icon}
                   size={16}
-                  color={category === cat.id ? '#fff' : theme.colors.textPrimary}
+                  color={
+                    category === cat.id
+                      ? '#fff'
+                      : theme.colors.textPrimary
+                  }
                 />
                 <Text
                   style={{
-                    color: category === cat.id ? '#fff' : theme.colors.textPrimary,
+                    color:
+                      category === cat.id
+                        ? '#fff'
+                        : theme.colors.textPrimary,
                     fontSize: 11,
                     marginTop: 4,
                     fontWeight: '500',
@@ -179,9 +249,16 @@ export default function RecordExpenseScreen({ navigation }) {
           </View>
         </Card>
 
-        {/* Amount Card */}
         <Card style={{ marginBottom: 16 }}>
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>Amount *</Text>
+          <Text
+            style={{
+              color: theme.colors.textSecondary,
+              fontSize: 12,
+              marginBottom: 8,
+            }}
+          >
+            Amount *
+          </Text>
           <TextInput
             style={[
               styles.input,
@@ -198,7 +275,14 @@ export default function RecordExpenseScreen({ navigation }) {
             onChangeText={setAmount}
           />
 
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8, marginTop: 12 }}>
+          <Text
+            style={{
+              color: theme.colors.textSecondary,
+              fontSize: 12,
+              marginBottom: 8,
+              marginTop: 12,
+            }}
+          >
             Payment Method
           </Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -208,7 +292,10 @@ export default function RecordExpenseScreen({ navigation }) {
                 style={[
                   styles.methodButton,
                   {
-                    backgroundColor: paymentMethod === method ? theme.colors.primary : theme.colors.card,
+                    backgroundColor:
+                      paymentMethod === method
+                        ? theme.colors.primary
+                        : theme.colors.card,
                     borderColor: theme.colors.border,
                   },
                 ]}
@@ -218,7 +305,10 @@ export default function RecordExpenseScreen({ navigation }) {
               >
                 <Text
                   style={{
-                    color: paymentMethod === method ? '#fff' : theme.colors.textPrimary,
+                    color:
+                      paymentMethod === method
+                        ? '#fff'
+                        : theme.colors.textPrimary,
                     textTransform: 'capitalize',
                     fontWeight: '500',
                   }}
@@ -230,9 +320,16 @@ export default function RecordExpenseScreen({ navigation }) {
           </View>
         </Card>
 
-        {/* Description & Notes Card */}
         <Card style={{ marginBottom: 16 }}>
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>Description</Text>
+          <Text
+            style={{
+              color: theme.colors.textSecondary,
+              fontSize: 12,
+              marginBottom: 8,
+            }}
+          >
+            Description
+          </Text>
           <TextInput
             style={[
               styles.input,
@@ -248,7 +345,16 @@ export default function RecordExpenseScreen({ navigation }) {
             onChangeText={setDescription}
           />
 
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8, marginTop: 12 }}>Notes</Text>
+          <Text
+            style={{
+              color: theme.colors.textSecondary,
+              fontSize: 12,
+              marginBottom: 8,
+              marginTop: 12,
+            }}
+          >
+            Notes
+          </Text>
           <TextInput
             style={[
               styles.input,
@@ -268,9 +374,14 @@ export default function RecordExpenseScreen({ navigation }) {
           />
         </Card>
 
-        {/* Submit Button */}
         <TouchableOpacity
-          style={[styles.submitButton, { backgroundColor: theme.colors.warning, opacity: loading ? 0.7 : 1 }]}
+          style={[
+            styles.submitButton,
+            {
+              backgroundColor: theme.colors.warning,
+              opacity: loading ? 0.7 : 1,
+            },
+          ]}
           onPress={handleSubmit}
           disabled={loading}
           accessibilityLabel="Record expense"
@@ -278,7 +389,7 @@ export default function RecordExpenseScreen({ navigation }) {
         >
           <MaterialIcons name="check-circle" size={20} color="#fff" />
           <Text style={{ color: '#fff', fontWeight: '600', marginLeft: 8 }}>
-            {loading ? 'Recording…' : 'Record Expense'}
+            {loading ? 'Recording...' : 'Record Expense'}
           </Text>
         </TouchableOpacity>
       </ScrollView>

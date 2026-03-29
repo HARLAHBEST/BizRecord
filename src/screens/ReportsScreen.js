@@ -1,5 +1,13 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions, Share, Platform } from 'react-native';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  useWindowDimensions,
+  Share,
+  Platform,
+} from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '../theme/ThemeContext';
 import { Card, Subtle, EmptyState, SkeletonBlock } from '../components/UI';
@@ -9,6 +17,26 @@ import { cacheTransactions, getCachedTransactions } from '../storage/offlineStor
 import { MaterialIcons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+
+const formatCurrency = (value) => `NGN ${Number(value || 0).toLocaleString()}`;
+
+const normalizeTransactionDate = (tx) => {
+  const candidates = [tx?.createdAt, tx?.updatedAt];
+  for (const value of candidates) {
+    const date = new Date(value || 0);
+    if (!Number.isNaN(date.getTime())) return date;
+  }
+  return null;
+};
+
+const dedupeTransactions = (items = []) => {
+  const map = new Map();
+  items.forEach((item) => {
+    const key = String(item?.id || item?.local_id || Math.random());
+    map.set(key, item);
+  });
+  return Array.from(map.values());
+};
 
 export default function ReportsScreen({ navigation }) {
   const themeContext = useTheme();
@@ -31,17 +59,41 @@ export default function ReportsScreen({ navigation }) {
 
         setLoading(true);
         try {
-          const localRows = await repo.getTransactions();
+          const [localRows, localDebtRows] = await Promise.all([
+            repo.getTransactions(),
+            repo.getDebts(),
+          ]);
           const localList = [];
+
           if (localRows?.rows?.length > 0) {
             for (let i = 0; i < localRows.rows.length; i += 1) {
               const row = localRows.rows.item(i);
               const data = row.data ? JSON.parse(row.data) : {};
-              localList.push({ ...data, id: data.id ?? row.server_id ?? row.local_id, local_id: row.local_id, sync_status: row.sync_status });
+              localList.push({
+                ...data,
+                id: data.id ?? row.server_id ?? row.local_id,
+                local_id: row.local_id,
+                sync_status: row.sync_status,
+              });
             }
           }
-          if (mounted && localList.length > 0) {
-            setTransactions(localList);
+
+          if (localDebtRows?.rows?.length > 0) {
+            for (let i = 0; i < localDebtRows.rows.length; i += 1) {
+              const row = localDebtRows.rows.item(i);
+              const data = row.data ? JSON.parse(row.data) : {};
+              localList.push({
+                ...data,
+                id: data.id ?? row.server_id ?? row.local_id,
+                local_id: row.local_id,
+                sync_status: row.sync_status,
+              });
+            }
+          }
+
+          const mergedLocal = dedupeTransactions(localList);
+          if (mounted && mergedLocal.length > 0) {
+            setTransactions(mergedLocal);
           }
 
           const list = await api.get(`/workspaces/${currentWorkspaceId}/transactions`, {
@@ -65,14 +117,11 @@ export default function ReportsScreen({ navigation }) {
       };
 
       loadTransactions();
-
       return () => {
         mounted = false;
       };
-    }, [currentWorkspaceId, repo])
+    }, [currentWorkspaceId, repo]),
   );
-
-  const formatCurrency = (value) => `₦${Number(value || 0).toLocaleString()}`;
 
   const analytics = useMemo(() => {
     const now = new Date();
@@ -90,15 +139,22 @@ export default function ReportsScreen({ navigation }) {
     transactions.forEach((tx) => {
       const amount = Number(tx?.totalAmount ?? tx?.amount ?? 0);
       const txType = String(tx?.type || '').toLowerCase();
-      const createdAt = tx?.createdAt ? new Date(tx.createdAt) : null;
-      if (!createdAt || Number.isNaN(createdAt.getTime())) return;
+      const createdAt = normalizeTransactionDate(tx);
+      if (!createdAt) return;
 
       const year = createdAt.getFullYear();
       const month = createdAt.getMonth();
       const key = `${year}-${String(month + 1).padStart(2, '0')}`;
 
       if (!monthlyMap.has(key)) {
-        monthlyMap.set(key, { key, label: createdAt.toLocaleString('default', { month: 'short' }), year, income: 0, expense: 0, debt: 0 });
+        monthlyMap.set(key, {
+          key,
+          label: createdAt.toLocaleString('default', { month: 'short' }),
+          year,
+          income: 0,
+          expense: 0,
+          debt: 0,
+        });
       }
 
       const bucket = monthlyMap.get(key);
@@ -115,19 +171,20 @@ export default function ReportsScreen({ navigation }) {
         if (year === currentYear && month === currentMonth) thisMonthExpenses += amount;
       }
 
-      if (txType === 'debt') {
+      if (txType === 'debt' && tx.status !== 'completed') {
         bucket.debt += amount;
         debtExposure += amount;
       }
     });
 
-    const monthlyRows = Array.from(monthlyMap.values()).sort((a, b) => a.key.localeCompare(b.key));
+    const monthlyRows = Array.from(monthlyMap.values()).sort((a, b) =>
+      a.key.localeCompare(b.key),
+    );
     const recentMonths = monthlyRows.slice(-6);
-    const maxBarValue = Math.max(1, ...recentMonths.map((m) => Math.max(m.income, m.expense)));
-    const avgSaleValue = saleCount > 0 ? thisYearIncome / saleCount : 0;
-    const netThisYear = thisYearIncome - thisYearExpenses;
-    const expenseToIncomeRatio = thisYearIncome > 0 ? thisYearExpenses / thisYearIncome : 0;
-    const topIncomeMonth = monthlyRows.reduce((best, item) => (item.income > (best?.income || 0) ? item : best), null);
+    const maxBarValue = Math.max(
+      1,
+      ...recentMonths.map((month) => Math.max(month.income, month.expense)),
+    );
 
     return {
       thisMonthIncome,
@@ -135,10 +192,14 @@ export default function ReportsScreen({ navigation }) {
       thisMonthExpenses,
       thisYearExpenses,
       debtExposure,
-      avgSaleValue,
-      netThisYear,
-      expenseToIncomeRatio,
-      topIncomeMonth,
+      avgSaleValue: saleCount > 0 ? thisYearIncome / saleCount : 0,
+      netThisYear: thisYearIncome - thisYearExpenses,
+      expenseToIncomeRatio:
+        thisYearIncome > 0 ? thisYearExpenses / thisYearIncome : 0,
+      topIncomeMonth: monthlyRows.reduce(
+        (best, item) => (item.income > (best?.income || 0) ? item : best),
+        null,
+      ),
       recentMonths,
       maxBarValue,
       totalTransactions: transactions.length,
@@ -202,8 +263,8 @@ export default function ReportsScreen({ navigation }) {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}> 
-      <View style={[styles.headerWrap, { width: contentWidth }]}> 
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <View style={[styles.headerWrap, { width: contentWidth }]}>
         <View style={styles.headerRow}>
           <TouchableOpacity
             onPress={() => {
@@ -211,71 +272,141 @@ export default function ReportsScreen({ navigation }) {
                 navigation.goBack();
               }
             }}
-            style={[styles.backButton, { borderColor: theme.colors.border, opacity: navigation?.canGoBack && navigation.canGoBack() ? 1 : 0.35 }]}
+            style={[
+              styles.backButton,
+              {
+                borderColor: theme.colors.border,
+                opacity:
+                  navigation?.canGoBack && navigation.canGoBack() ? 1 : 0.35,
+              },
+            ]}
             disabled={!(navigation?.canGoBack && navigation.canGoBack())}
           >
-            <MaterialIcons name="arrow-back" size={20} color={theme.colors.textPrimary} />
+            <MaterialIcons
+              name="arrow-back"
+              size={20}
+              color={theme.colors.textPrimary}
+            />
           </TouchableOpacity>
-          <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 20 }}>Analytics</Text>
+          <Text
+            style={{
+              color: theme.colors.textPrimary,
+              fontWeight: '700',
+              fontSize: 20,
+            }}
+          >
+            Analytics
+          </Text>
         </View>
         <Subtle>Monthly and yearly performance snapshot</Subtle>
-        <TouchableOpacity style={[styles.exportBtn, { borderColor: theme.colors.border }]} onPress={exportCsv}>
-          <MaterialIcons name="file-download" size={18} color={theme.colors.textPrimary} />
-          <Text style={{ color: theme.colors.textPrimary, marginLeft: 8, fontWeight: '600' }}>Export CSV</Text>
+        <TouchableOpacity
+          style={[styles.exportBtn, { borderColor: theme.colors.border }]}
+          onPress={exportCsv}
+        >
+          <MaterialIcons
+            name="file-download"
+            size={18}
+            color={theme.colors.textPrimary}
+          />
+          <Text
+            style={{
+              color: theme.colors.textPrimary,
+              marginLeft: 8,
+              fontWeight: '600',
+            }}
+          >
+            Export CSV
+          </Text>
         </TouchableOpacity>
       </View>
 
       {loading ? (
         <View style={{ width: contentWidth, marginTop: 24 }}>
-          <SkeletonBlock height={28} width="40%" style={{ marginBottom: 18, borderRadius: 8 }} />
-          <SkeletonBlock height={100} style={{ marginBottom: 18, borderRadius: 16 }} />
-          <SkeletonBlock height={100} style={{ marginBottom: 18, borderRadius: 16 }} />
-          <SkeletonBlock height={100} style={{ marginBottom: 18, borderRadius: 16 }} />
+          <SkeletonBlock
+            height={28}
+            width="40%"
+            style={{ marginBottom: 18, borderRadius: 8 }}
+          />
+          <SkeletonBlock
+            height={100}
+            style={{ marginBottom: 18, borderRadius: 16 }}
+          />
+          <SkeletonBlock
+            height={100}
+            style={{ marginBottom: 18, borderRadius: 16 }}
+          />
+          <SkeletonBlock height={100} style={{ borderRadius: 16 }} />
         </View>
-      ) : (
-        analytics.totalTransactions > 0 ? (
+      ) : analytics.totalTransactions > 0 ? (
         <>
           <Card style={{ marginVertical: 14, width: contentWidth, elevation: 2 }}>
-            <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 18 }}>Income This Month</Text>
+            <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 18 }}>
+              Income This Month
+            </Text>
             <Text style={{ color: theme.colors.success, fontSize: 26, fontWeight: '700', marginTop: 8 }}>
               {formatCurrency(analytics.thisMonthIncome)}
             </Text>
-            <Subtle style={{ marginTop: 10 }}>Income this year: {formatCurrency(analytics.thisYearIncome)}</Subtle>
+            <Subtle style={{ marginTop: 10 }}>
+              Income this year: {formatCurrency(analytics.thisYearIncome)}
+            </Subtle>
           </Card>
 
           <Card style={{ marginVertical: 14, width: contentWidth, elevation: 2 }}>
-            <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 18 }}>Expenses</Text>
+            <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 18 }}>
+              Expenses
+            </Text>
             <Text style={{ color: theme.colors.warning, fontSize: 26, fontWeight: '700', marginTop: 8 }}>
               {formatCurrency(analytics.thisMonthExpenses)}
             </Text>
-            <Subtle style={{ marginTop: 10 }}>Expenses this year: {formatCurrency(analytics.thisYearExpenses)}</Subtle>
+            <Subtle style={{ marginTop: 10 }}>
+              Expenses this year: {formatCurrency(analytics.thisYearExpenses)}
+            </Subtle>
           </Card>
 
           <Card style={{ marginVertical: 14, width: contentWidth, elevation: 2 }}>
-            <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 18 }}>Year Net Profit</Text>
+            <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 18 }}>
+              Year Net Profit
+            </Text>
             <Text style={{ color: theme.colors.primary, fontSize: 26, fontWeight: '700', marginTop: 8 }}>
               {formatCurrency(analytics.netThisYear)}
             </Text>
-            <Subtle style={{ marginTop: 10 }}>Transactions: {analytics.totalTransactions}</Subtle>
+            <Subtle style={{ marginTop: 10 }}>
+              Transactions: {analytics.totalTransactions}
+            </Subtle>
           </Card>
 
           <Card style={{ marginVertical: 14, width: contentWidth, elevation: 2 }}>
-            <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 18, marginBottom: 10 }}>Monthly Income vs Expense (last 6 months)</Text>
+            <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 18, marginBottom: 10 }}>
+              Monthly Income vs Expense (last 6 months)
+            </Text>
             {analytics.recentMonths.map((month) => {
               const incomeWidth = `${Math.max(4, (month.income / analytics.maxBarValue) * 100)}%`;
               const expenseWidth = `${Math.max(4, (month.expense / analytics.maxBarValue) * 100)}%`;
               return (
                 <View key={month.key} style={{ marginBottom: 16 }}>
-                  <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' }}>{month.label} {month.year}</Text>
-                  <View style={[styles.track, { backgroundColor: theme.colors.border }]}
-                    accessible accessibilityLabel={`Income bar for ${month.label} ${month.year}`}
-                  >
-                    <View style={[styles.incomeBar, { width: incomeWidth, backgroundColor: theme.colors.success }]} />
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' }}>
+                    {month.label} {month.year}
+                  </Text>
+                  <View style={[styles.track, { backgroundColor: theme.colors.border }]}>
+                    <View
+                      style={[
+                        styles.incomeBar,
+                        { width: incomeWidth, backgroundColor: theme.colors.success },
+                      ]}
+                    />
                   </View>
-                  <View style={[styles.track, { backgroundColor: theme.colors.border, marginTop: 6 }]}
-                    accessible accessibilityLabel={`Expense bar for ${month.label} ${month.year}`}
+                  <View
+                    style={[
+                      styles.track,
+                      { backgroundColor: theme.colors.border, marginTop: 6 },
+                    ]}
                   >
-                    <View style={[styles.expenseBar, { width: expenseWidth, backgroundColor: theme.colors.warning }]} />
+                    <View
+                      style={[
+                        styles.expenseBar,
+                        { width: expenseWidth, backgroundColor: theme.colors.warning },
+                      ]}
+                    />
                   </View>
                 </View>
               );
@@ -284,26 +415,35 @@ export default function ReportsScreen({ navigation }) {
           </Card>
 
           <Card style={{ marginVertical: 14, width: contentWidth, elevation: 2 }}>
-            <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 18 }}>Extra Insights</Text>
-            <Subtle style={{ marginTop: 10 }}>Average sale value (year): {formatCurrency(analytics.avgSaleValue)}</Subtle>
-            <Subtle style={{ marginTop: 8 }}>Expense ratio (year): {(analytics.expenseToIncomeRatio * 100).toFixed(1)}%</Subtle>
-            <Subtle style={{ marginTop: 8 }}>Debt exposure: {formatCurrency(analytics.debtExposure)}</Subtle>
+            <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 18 }}>
+              Extra Insights
+            </Text>
+            <Subtle style={{ marginTop: 10 }}>
+              Average sale value (year): {formatCurrency(analytics.avgSaleValue)}
+            </Subtle>
             <Subtle style={{ marginTop: 8 }}>
-              Top income month: {analytics.topIncomeMonth ? `${analytics.topIncomeMonth.label} ${analytics.topIncomeMonth.year} (${formatCurrency(analytics.topIncomeMonth.income)})` : 'N/A'}
+              Expense ratio (year): {(analytics.expenseToIncomeRatio * 100).toFixed(1)}%
+            </Subtle>
+            <Subtle style={{ marginTop: 8 }}>
+              Debt exposure: {formatCurrency(analytics.debtExposure)}
+            </Subtle>
+            <Subtle style={{ marginTop: 8 }}>
+              Top income month:{' '}
+              {analytics.topIncomeMonth
+                ? `${analytics.topIncomeMonth.label} ${analytics.topIncomeMonth.year} (${formatCurrency(analytics.topIncomeMonth.income)})`
+                : 'N/A'}
             </Subtle>
           </Card>
         </>
-        ) : (
-          <EmptyState
-            icon="analytics"
-            title="No analytics data"
-            subtitle="Record transactions to unlock monthly and yearly insights"
-            style={{ width: contentWidth, marginTop: 32 }}
-            ctaLabel="Record a transaction"
-            onCtaPress={() => navigation?.navigate && navigation.navigate('RecordSaleScreen')}
-            accessibilityLabel="No analytics data. Record a transaction to unlock insights."
-          />
-        )
+      ) : (
+        <EmptyState
+          icon="analytics"
+          title="No analytics data"
+          subtitle="Record transactions to unlock monthly and yearly insights"
+          style={{ width: contentWidth, marginTop: 32 }}
+          ctaLabel="Record a transaction"
+          onCtaPress={() => navigation?.navigate && navigation.navigate('RecordSale')}
+        />
       )}
     </View>
   );

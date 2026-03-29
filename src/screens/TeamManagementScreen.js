@@ -293,7 +293,7 @@ export default function TeamManagementScreen({ navigation }) {
       <Card style={styles.section}>
         <View style={styles.sectionHeaderRow}>
           <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>Branches</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('BranchList')}>
+          <TouchableOpacity onPress={() => navigation.push('BranchList')}>
             <Text style={{ color: theme.colors.primary, fontWeight: '700' }}>Open all</Text>
           </TouchableOpacity>
         </View>

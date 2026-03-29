@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "BizRecord",
-    "slug": "booker-inventory",
+    "slug": "bizrecord",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
@@ -27,7 +27,7 @@
       "**/*"
     ],
     "android": {
-      "package": "com.bookerapp.inventory",
+      "package": "com.bizrecord.inventory",
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -41,7 +41,7 @@
     },
     "ios": {
       "supportsTabletMode": true,
-      "bundleIdentifier": "com.bookerapp.inventory",
+      "bundleIdentifier": "com.bizrecord.inventory",
       "buildNumber": "1",
       "infoPlist": {
         "NSCameraUsageDescription": "Camera is used to capture inventory photos",
@@ -55,7 +55,7 @@
       "favicon": "./assets/favicon.png"
     },
     "description": "Inventory management app for managing stock, tracking transactions, and generating reports",
-    "privacy": "https://example.com/privacy",
+    "privacy": "https://bizrecord.tech/privacy",
     "primaryColor": "#00A676",
     "androidStatusBar": {
       "backgroundColor": "#031f38",
@@ -65,8 +65,9 @@
     "plugins": [],
     "extra": {
       "eas": {
-        "projectId": "595d2e24-df5b-4d3b-b308-7c45a082711b"
+        "projectId": "b5fa460b-4c59-483e-9a97-9d4936e35f49"
       }
-    }
+    },
+    "owner": "bizrecord-organization"
   }
 }

@@ -13,7 +13,7 @@ import {
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { api } from '../api/client';
-import { cacheCustomers, getCachedCustomers, setIdMapping, upsertLocalDebt } from '../storage/offlineStore';
+import { cacheCustomers, getCachedCustomers, setIdMapping, upsertLocalDebt, upsertLocalTransaction } from '../storage/offlineStore';
 import { Card, Title, SkeletonBlock } from '../components/UI';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useCustomerSelect } from '../context/CustomerSelectContext';
@@ -66,6 +66,7 @@ export default function RecordDebtScreen({ navigation }) {
     const dueDate = dueInDays
       ? new Date(Date.now() + parseInt(dueInDays, 10) * 86400000).toISOString()
       : null;
+    const nowIso = new Date().toISOString();
     const payload = {
       type: 'debt',
       quantity: 1,
@@ -77,6 +78,8 @@ export default function RecordDebtScreen({ navigation }) {
       customerId: selectedCustomer?.id || undefined,
       customerName: customers.find((c) => c.id === selectedCustomer?.id)?.name || selectedCustomer?.name || undefined,
       status: 'pending',
+      createdAt: nowIso,
+      updatedAt: nowIso,
     };
 
     setLoading(true);
@@ -84,6 +87,13 @@ export default function RecordDebtScreen({ navigation }) {
     try {
       const result = await api.post(`/workspaces/${currentWorkspaceId}/transactions`, payload);
       await upsertLocalDebt({
+        local_id: localId,
+        server_id: result?.id ? String(result.id) : null,
+        workspace_server_id: currentWorkspaceId,
+        data: { ...payload, ...(result || {}), id: result?.id ?? localId, local_id: localId },
+        sync_status: 'synced',
+      }, currentWorkspaceId);
+      await upsertLocalTransaction({
         local_id: localId,
         server_id: result?.id ? String(result.id) : null,
         workspace_server_id: currentWorkspaceId,

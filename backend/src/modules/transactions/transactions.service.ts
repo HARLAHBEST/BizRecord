@@ -51,11 +51,14 @@ export class TransactionsService {
     let quantity = Number(createTransactionDto.quantity || 0);
     let unitPrice = Number(createTransactionDto.unitPrice || 0);
     let totalAmount = Number(createTransactionDto.totalAmount || 0);
+    const normalizedType = String(createTransactionDto.type || '').toLowerCase();
+    const isInventoryReducingTransaction =
+      normalizedType === 'sale' || normalizedType === 'debt';
 
-    if (createTransactionDto.type === 'sale') {
+    if (isInventoryReducingTransaction) {
       if (!createTransactionDto.itemId) {
         throw new BadRequestException(
-          'itemId is required for sale transactions',
+          'itemId is required for stock-based sale and debt transactions',
         );
       }
       if (!isUUID(createTransactionDto.itemId)) {
@@ -90,8 +93,13 @@ export class TransactionsService {
         );
       }
 
-      unitPrice = Number(item.sellingPrice || 0);
-      totalAmount = unitPrice * quantity;
+      unitPrice = Number(
+        createTransactionDto.unitPrice || item.sellingPrice || 0,
+      );
+      totalAmount =
+        Number(createTransactionDto.totalAmount || 0) > 0
+          ? Number(createTransactionDto.totalAmount)
+          : unitPrice * quantity;
 
       item.quantity = Number((currentStock - quantity).toFixed(2));
       await this.itemsRepository.save(item);
@@ -120,7 +128,7 @@ export class TransactionsService {
     transaction = await this.transactionsRepository.save(transaction);
 
     // Generate and upload receipt for sales
-    if (transaction && transaction.type === 'sale') {
+    if (transaction && (transaction.type === 'sale' || transaction.type === 'debt')) {
       try {
         const receiptUrl =
           await this.receiptService.generateAndUploadReceipt(transaction);

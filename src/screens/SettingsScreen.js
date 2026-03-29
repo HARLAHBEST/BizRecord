@@ -304,7 +304,7 @@ const SettingsScreen = function({ navigation }) {
                 return;
               }
               if (canManageWorkspace) {
-                navigation.navigate('BranchList');
+                navigation.push('BranchList');
               }
             }}
             disabled={!canManageWorkspace}
