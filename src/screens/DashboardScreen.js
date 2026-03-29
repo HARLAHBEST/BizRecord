@@ -122,6 +122,11 @@ export default function DashboardScreen({ navigation }) {
     const cost = Number(item.costPrice) || 0;
     return sum + qty * cost;
   }, 0);
+  const formatActivityDate = (value) => {
+    const date = new Date(value || Date.now());
+    if (Number.isNaN(date.getTime())) return 'Unknown date';
+    return date.toLocaleString();
+  };
 
   const handleAddItem = () => {
     navigation.navigate('AddItem');
@@ -279,7 +284,7 @@ export default function DashboardScreen({ navigation }) {
                           <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>
                             {tx.customerName || 'Walk-in'} • ₦{Number(tx.totalAmount).toLocaleString()}
                           </Text>
-                          <Subtle>{new Date(tx.createdAt).toLocaleString()}</Subtle>
+                          <Subtle>{formatActivityDate(tx.createdAt)}</Subtle>
                         </View>
                       ))}
                     </Card>
@@ -293,7 +298,7 @@ export default function DashboardScreen({ navigation }) {
                           <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>
                             {tx.category || 'Expense'} • ₦{Number(tx.totalAmount).toLocaleString()}
                           </Text>
-                          <Subtle>{new Date(tx.createdAt).toLocaleString()}</Subtle>
+                          <Subtle>{formatActivityDate(tx.createdAt)}</Subtle>
                         </View>
                       ))}
                     </Card>
