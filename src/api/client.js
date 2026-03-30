@@ -79,6 +79,13 @@ const buildOfflineFallback = async (path, query) => {
     return getCachedInventory(inventoryMatch[2]);
   }
 
+  const workspaceInventoryMatch = path.match(
+    /^\/workspaces\/([^/]+)\/inventory$/,
+  );
+  if (workspaceInventoryMatch) {
+    return getCachedInventory(workspaceInventoryMatch[1]);
+  }
+
   const transactionsMatch = path.match(
     /^\/workspaces\/([^/]+)\/branches\/([^/]+)\/transactions$/,
   );

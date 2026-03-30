@@ -20,7 +20,7 @@ import * as offlineStore from '../storage/offlineStore';
 const AddItemScreen = function({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
-  const { currentWorkspaceId, activeBranchId, queueAction } = useWorkspace();
+  const { currentWorkspaceId, activeBranchId, currentBranch, queueAction } = useWorkspace();
 
   const [name, setName] = useState('');
   const [quantity, setQuantity] = useState('1');
@@ -31,6 +31,11 @@ const AddItemScreen = function({ navigation }) {
   const [minStock, setMinStock] = useState('1');
   const [loading, setLoading] = useState(false);
 
+  const inventoryPath = activeBranchId
+    ? `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/inventory`
+    : `/workspaces/${currentWorkspaceId}/inventory`;
+  const inventoryScopeLabel = currentBranch?.name || 'workspace inventory';
+
   const handleAddItem = async function() {
     if (!name.trim() || !category.trim() || !location.trim()) {
       Platform.OS === 'web'
@@ -39,7 +44,7 @@ const AddItemScreen = function({ navigation }) {
       return;
     }
 
-    if (!currentWorkspaceId || !activeBranchId) {
+    if (!currentWorkspaceId) {
       Platform.OS === 'web'
         ? window.alert('Please select a workspace first')
         : Alert.alert('Error', 'Please select a workspace first');
@@ -61,23 +66,23 @@ const AddItemScreen = function({ navigation }) {
     const localId = `local_item_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
     try {
-      const result = await api.post(`/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/inventory`, payload);
+      const result = await api.post(inventoryPath, payload);
       // Upsert into local SQLite so InventoryScreen shows the new item immediately
       const serverId = result?.id ? String(result.id) : null;
       offlineStore.upsertLocalInventory({
         local_id: localId,
         server_id: serverId,
-        workspace_server_id: activeBranchId,
+        workspace_server_id: activeBranchId || currentWorkspaceId,
         data: { ...payload, id: result?.id ?? localId },
         sync_status: 'synced',
-      }, activeBranchId).catch(() => null);
+      }, activeBranchId || currentWorkspaceId).catch(() => null);
       if (serverId) {
         offlineStore.setIdMapping('inventory', localId, serverId).catch(() => null);
       }
 
       Platform.OS === 'web'
-        ? window.alert('Item added successfully!')
-        : Alert.alert('Success', 'Item added successfully!');
+        ? window.alert(`Item added successfully to ${inventoryScopeLabel}!`)
+        : Alert.alert('Success', `Item added successfully to ${inventoryScopeLabel}!`);
 
       setName('');
       setQuantity('1');
@@ -93,23 +98,23 @@ const AddItemScreen = function({ navigation }) {
         const localItem = {
           local_id: localId,
           server_id: null,
-          workspace_server_id: activeBranchId,
+          workspace_server_id: activeBranchId || currentWorkspaceId,
           data: payload,
           sync_status: 'pending_create',
         };
-        await offlineStore.upsertLocalInventory(localItem, activeBranchId);
+        await offlineStore.upsertLocalInventory(localItem, activeBranchId || currentWorkspaceId);
         // Queue to the structured outbox for background sync
         await offlineStore.addSyncOutboxAction({
           action_id: localId,
           action_type: 'create_inventory',
           entity_type: 'inventory',
           entity_local_id: localId,
-          workspace_ref: activeBranchId,
+          workspace_ref: activeBranchId || currentWorkspaceId,
           payload,
         });
         Platform.OS === 'web'
-          ? window.alert('Item saved locally and will sync once online')
-          : Alert.alert('Offline', 'Item saved locally and will sync once online');
+          ? window.alert(`Item saved locally to ${inventoryScopeLabel} and will sync once online`)
+          : Alert.alert('Offline', `Item saved locally to ${inventoryScopeLabel} and will sync once online`);
         setName('');
         setQuantity('1');
         setCostPrice('0');

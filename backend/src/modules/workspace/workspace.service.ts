@@ -770,16 +770,16 @@ export class WorkspaceService {
       where: [{ workspaceId, isActive: true }],
       relations: ['user'],
     });
-    const branchMemberships = await this.branchMembershipsRepository.find({
-      where:
-        branches.length > 0
-          ? branches.map((item) => ({
+    const branchMemberships =
+      branches.length > 0
+        ? await this.branchMembershipsRepository.find({
+            where: branches.map((item) => ({
               branchId: item.id,
               isActive: true,
-            }))
-          : [{ branchId: '__none__', isActive: true }],
-      relations: ['user'],
-    });
+            })),
+            relations: ['user'],
+          })
+        : [];
 
     const inventoryCounts = await this.inventoryRepository
       .createQueryBuilder('item')

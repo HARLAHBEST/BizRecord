@@ -1,7 +1,10 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { InventoryService } from './inventory.service';
-import { InventoryController } from './inventory.controller';
+import {
+  InventoryController,
+  WorkspaceInventoryController,
+} from './inventory.controller';
 import { StockTransferController } from './stock-transfer.controller';
 import { InventoryItem } from './entities/inventory-item.entity';
 import { Workspace } from '../workspace/entities/workspace.entity';
@@ -19,7 +22,11 @@ import { StockTransfer } from './entities/stock-transfer.entity';
     WorkspaceModule,
   ],
   providers: [InventoryService],
-  controllers: [InventoryController, StockTransferController],
+  controllers: [
+    InventoryController,
+    WorkspaceInventoryController,
+    StockTransferController,
+  ],
   exports: [InventoryService],
 })
 export class InventoryModule {}

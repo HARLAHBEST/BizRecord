@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { InventoryItem } from './entities/inventory-item.entity';
 import { Workspace } from '../workspace/entities/workspace.entity';
 import { User } from '../auth/entities/user.entity';
@@ -36,35 +36,68 @@ export class InventoryService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
+  private async assertInventoryScope(
+    workspaceId: string,
+    branchId: string | null,
+    userId: string,
+    permission: 'inventory.view' | 'inventory.manage',
+  ) {
+    if (branchId) {
+      const access = await this.branchAccessService.assertBranchPermission(
+        workspaceId,
+        branchId,
+        userId,
+        permission,
+      );
+      return {
+        branch: access.branch,
+        workspace: access.branch.workspace,
+        user: access.user,
+        ownerLike: access.ownerLike,
+      };
+    }
+
+    const { workspace, user } =
+      await this.branchAccessService.assertWorkspaceOwnerLike(
+        workspaceId,
+        userId,
+      );
+
+    return {
+      branch: null,
+      workspace,
+      user,
+      ownerLike: true,
+    };
+  }
+
   // Create a new inventory item
   async createItem(
     createItemDto: CreateInventoryItemDto,
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     userId: string,
   ) {
-    const { branch, user } = await this.branchAccessService.assertBranchPermission(
+    const { branch, user, workspace } = await this.assertInventoryScope(
       workspaceId,
       branchId,
       userId,
       'inventory.manage',
     );
-    const workspace = await this.workspacesRepository.findOne({ where: { id: workspaceId } });
-    if (!workspace) throw new NotFoundException('Workspace not found');
 
     const item = this.itemsRepository.create({
       ...createItemDto,
       workspace,
       workspaceId,
-      branch,
-      branchId: branch.id,
+      branch: branch || null,
+      branchId: branch?.id || null,
       createdBy: user,
     });
 
     const savedItem = await this.itemsRepository.save(item);
     await this.auditLogService.log({
       workspaceId,
-      branchId,
+      branchId: branchId || undefined,
       actorUserId: userId,
       action: 'inventory.create',
       entityType: 'inventory',
@@ -98,19 +131,21 @@ export class InventoryService {
   // Get paginated inventory items for a workspace
   async getItems(
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     userId: string,
     skip = 0,
     take = 20,
   ) {
-    await this.branchAccessService.assertBranchPermission(
+    await this.assertInventoryScope(
       workspaceId,
       branchId,
       userId,
       'inventory.view',
     );
     return this.itemsRepository.find({
-      where: { workspaceId, branchId },
+      where: branchId
+        ? { workspaceId, branchId }
+        : { workspaceId, branchId: IsNull() },
       skip,
       take,
       relations: ['workspace', 'branch', 'createdBy'],
@@ -120,18 +155,20 @@ export class InventoryService {
   // Get a single inventory item by ID
   async getItem(
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     itemId: string,
     userId: string,
   ) {
-    await this.branchAccessService.assertBranchPermission(
+    await this.assertInventoryScope(
       workspaceId,
       branchId,
       userId,
       'inventory.view',
     );
     const item = await this.itemsRepository.findOne({
-      where: { id: itemId, workspaceId, branchId },
+      where: branchId
+        ? { id: itemId, workspaceId, branchId }
+        : { id: itemId, workspaceId, branchId: IsNull() },
       relations: ['workspace', 'branch', 'createdBy'],
     });
 
@@ -145,12 +182,12 @@ export class InventoryService {
   // Update an inventory item
   async updateItem(
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     itemId: string,
     updateItemDto: UpdateInventoryItemDto,
     userId: string,
   ) {
-    await this.branchAccessService.assertBranchPermission(
+    await this.assertInventoryScope(
       workspaceId,
       branchId,
       userId,
@@ -161,7 +198,7 @@ export class InventoryService {
     const updatedItem = await this.itemsRepository.save(item);
     await this.auditLogService.log({
       workspaceId,
-      branchId,
+      branchId: branchId || undefined,
       actorUserId: userId,
       action: 'inventory.update',
       entityType: 'inventory',
@@ -191,11 +228,11 @@ export class InventoryService {
   // Delete an inventory item
   async deleteItem(
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     itemId: string,
     userId: string,
   ) {
-    await this.branchAccessService.assertBranchPermission(
+    await this.assertInventoryScope(
       workspaceId,
       branchId,
       userId,
@@ -212,7 +249,7 @@ export class InventoryService {
     await this.itemsRepository.remove(item);
     await this.auditLogService.log({
       workspaceId,
-      branchId,
+      branchId: branchId || undefined,
       actorUserId: userId,
       action: 'inventory.delete',
       entityType: 'inventory',
@@ -242,24 +279,31 @@ export class InventoryService {
   // Search items in a workspace by name or SKU
   async searchItems(
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     userId: string,
     searchTerm: string,
   ) {
-    await this.branchAccessService.assertBranchPermission(
+    await this.assertInventoryScope(
       workspaceId,
       branchId,
       userId,
       'inventory.view',
     );
-    return this.itemsRepository
+
+    const query = this.itemsRepository
       .createQueryBuilder('item')
       .where('item.workspace_id = :workspaceId', { workspaceId })
-      .andWhere('item.branch_id = :branchId', { branchId })
       .andWhere('(item.name ILIKE :searchTerm OR item.sku ILIKE :searchTerm)', {
         searchTerm: `%${searchTerm}%`,
-      })
-      .getMany();
+      });
+
+    if (branchId) {
+      query.andWhere('item.branch_id = :branchId', { branchId });
+    } else {
+      query.andWhere('item.branch_id IS NULL');
+    }
+
+    return query.getMany();
   }
 
   async transferStock(

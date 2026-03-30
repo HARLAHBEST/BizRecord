@@ -33,10 +33,14 @@ const HomeScreen = function({ navigation }) {
   const [selectedItem, setSelectedItem] = useState(null);
   const [newQuantity, setNewQuantity] = useState('');
   const isLikelyOfflineError = (err) => !err?.response;
+  const inventoryPath = activeBranchId
+    ? `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/inventory`
+    : `/workspaces/${currentWorkspaceId}/inventory`;
+  const inventoryScopeId = activeBranchId || currentWorkspaceId;
 
   // Local-first list rendering with pending overlay
   const loadItems = useCallback(async () => {
-    if (!currentWorkspaceId || !activeBranchId) {
+    if (!currentWorkspaceId) {
       setItems([]);
       return;
     }
@@ -64,10 +68,10 @@ const HomeScreen = function({ navigation }) {
 
       // Optionally, fetch remote and update local cache if online
       try {
-        const data = await api.get(`/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/inventory`);
+        const data = await api.get(inventoryPath);
         const list = Array.isArray(data) ? data : [];
         setItems(list);
-        cacheInventory(activeBranchId, list);
+        cacheInventory(inventoryScopeId, list);
       } catch (err) {
         // Ignore fetch error, stay local
       }
@@ -76,7 +80,7 @@ const HomeScreen = function({ navigation }) {
     } finally {
       setLoadingItems(false);
     }
-  }, [currentWorkspaceId, activeBranchId, repo]);
+  }, [currentWorkspaceId, inventoryPath, inventoryScopeId, repo]);
 
   useFocusEffect(
     useCallback(() => {
@@ -137,7 +141,7 @@ const HomeScreen = function({ navigation }) {
           // Fallback: try to infer action from item
           action = {
             method: 'put',
-            path: `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/inventory/${item.id}`,
+            path: `${inventoryPath}/${item.id}`,
             body: { ...item },
           };
         }
@@ -159,14 +163,14 @@ const HomeScreen = function({ navigation }) {
     return ['All'].concat(Object.keys(categorySet));
   }, [items]);
 
-  const handleUpdateQuantity = async function(itemId, qty) {
+  const handleUpdateQuantity = useCallback(async function(itemId, qty) {
     if (qty < 0) return;
 
-    if (!currentWorkspaceId || !activeBranchId) return;
+    if (!currentWorkspaceId) return;
 
     try {
       await api.put(
-        `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/inventory/${itemId}`,
+        `${inventoryPath}/${itemId}`,
         { quantity: qty }
       );
 
@@ -177,7 +181,7 @@ const HomeScreen = function({ navigation }) {
           }
           return item;
         });
-        cacheInventory(activeBranchId, next);
+        cacheInventory(inventoryScopeId, next);
         return next;
       });
 
@@ -200,7 +204,7 @@ const HomeScreen = function({ navigation }) {
       if (queueAction && isLikelyOfflineError(err)) {
         await queueAction({
           method: 'put',
-          path: `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/inventory/${itemId}`,
+          path: `${inventoryPath}/${itemId}`,
           body: { quantity: qty },
         });
         Alert.alert('Offline', 'Update queued and will sync once online');
@@ -210,10 +214,10 @@ const HomeScreen = function({ navigation }) {
     } finally {
       setShowUpdateModal(false);
     }
-  };
+  }, [currentWorkspaceId, inventoryPath, inventoryScopeId, items, queueAction]);
 
   const handleDeleteItem = async (itemId) => {
-    if (!currentWorkspaceId || !activeBranchId) return;
+    if (!currentWorkspaceId) return;
 
     Alert.alert('Delete item', 'Are you sure you want to delete this item?', [
       { text: 'Cancel', style: 'cancel' },
@@ -223,18 +227,18 @@ const HomeScreen = function({ navigation }) {
         onPress: async () => {
           try {
             await api.delete(
-              `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/inventory/${itemId}`
+              `${inventoryPath}/${itemId}`
             );
             setItems((prev) => {
               const next = prev.filter((item) => item.id !== itemId);
-              cacheInventory(activeBranchId, next);
+              cacheInventory(inventoryScopeId, next);
               return next;
             });
           } catch (err) {
             if (queueAction && isLikelyOfflineError(err)) {
               await queueAction({
                 method: 'delete',
-                path: `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/inventory/${itemId}`,
+                path: `${inventoryPath}/${itemId}`,
               });
               Alert.alert('Offline', 'Delete queued and will sync once online');
             } else {
