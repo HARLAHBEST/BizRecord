@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
+import { Alert, View, Text, ScrollView, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
@@ -144,6 +144,14 @@ export default function DashboardScreen({ navigation }) {
     navigation.navigate('RecordExpense');
   };
 
+  const handleOpenStockTransfer = () => {
+    if ((workspace.branches?.length || 0) < 2) {
+      Alert.alert('Stock transfer', 'You need at least two accessible branches before transferring stock.');
+      return;
+    }
+    navigation.navigate('StockTransfer');
+  };
+
   return (
     <>
       {showRenewalModal && (
@@ -270,7 +278,7 @@ export default function DashboardScreen({ navigation }) {
                 <AppButton
                   title="Stock Transfers"
                   icon="swap-horiz"
-                  onPress={() => navigation.navigate('StockTransfer')}
+                  onPress={handleOpenStockTransfer}
                   style={{ flex: 1 }}
                 />
                 <AppButton

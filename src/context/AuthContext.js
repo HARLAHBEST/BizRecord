@@ -92,7 +92,11 @@ export const AuthProvider = ({ children }) => {
 
   const clearAuth = async () => {
     try {
-      await AsyncStorage.removeItem(STORAGE_KEY);
+      await AsyncStorage.multiRemove([
+        STORAGE_KEY,
+        OFFLINE_PWHASH_KEY,
+        OFFLINE_PWHASH_META_KEY,
+      ]);
     } catch (error) {
       // ignore
     }

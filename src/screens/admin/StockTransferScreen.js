@@ -28,6 +28,7 @@ export default function StockTransferScreen({ navigation, route }) {
     () => (branches || []).filter((branch) => branch.id !== sourceBranchId),
     [branches, sourceBranchId],
   );
+  const canTransferBetweenBranches = (branches || []).length > 1;
 
   const loadTransfers = useCallback(async (isRefresh = false) => {
     if (!currentWorkspaceId) return;
@@ -63,7 +64,7 @@ export default function StockTransferScreen({ navigation, route }) {
       !destinationBranchId ||
       !destinationBranches.some((branch) => branch.id === destinationBranchId)
     ) {
-      setDestinationBranchId(destinationBranches[0].id);
+      setDestinationBranchId(destinationBranches[0]?.id || '');
     }
   }, [destinationBranchId, destinationBranches]);
 
@@ -79,6 +80,11 @@ export default function StockTransferScreen({ navigation, route }) {
   );
 
   const handleTransfer = async () => {
+    if (!canTransferBetweenBranches) {
+      Alert.alert('Stock transfer', 'Create or access at least two branches before transferring stock.');
+      return;
+    }
+
     if (!sourceBranchId || !destinationBranchId || !sourceItemId || !quantity) {
       Alert.alert('Stock transfer', 'Complete the source, destination, item, and quantity.');
       return;
@@ -124,8 +130,15 @@ export default function StockTransferScreen({ navigation, route }) {
 
       <Card style={{ marginBottom: 16 }}>
         <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>New Transfer</Text>
+        {!canTransferBetweenBranches ? (
+          <EmptyState
+            icon="swap-horizontal-circle"
+            title="More branches needed"
+            subtitle="Stock transfers require at least two accessible branches."
+          />
+        ) : null}
         <View style={[styles.pickerWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.background }]}>
-          <Picker selectedValue={sourceBranchId} onValueChange={setSourceBranchId} style={{ color: theme.colors.textPrimary }}>
+          <Picker selectedValue={sourceBranchId} onValueChange={setSourceBranchId} style={{ color: theme.colors.textPrimary }} enabled={canTransferBetweenBranches}>
             <Picker.Item label="Select source branch" value="" />
             {(branches || []).map((branch) => (
               <Picker.Item key={branch.id} label={branch.name} value={branch.id} />
@@ -133,7 +146,7 @@ export default function StockTransferScreen({ navigation, route }) {
           </Picker>
         </View>
         <View style={[styles.pickerWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.background }]}>
-          <Picker selectedValue={destinationBranchId} onValueChange={setDestinationBranchId} style={{ color: theme.colors.textPrimary }}>
+          <Picker selectedValue={destinationBranchId} onValueChange={setDestinationBranchId} style={{ color: theme.colors.textPrimary }} enabled={canTransferBetweenBranches}>
             <Picker.Item label="Select destination branch" value="" />
             {destinationBranches.map((branch) => (
               <Picker.Item key={branch.id} label={branch.name} value={branch.id} />
@@ -141,7 +154,7 @@ export default function StockTransferScreen({ navigation, route }) {
           </Picker>
         </View>
         <View style={[styles.pickerWrap, { borderColor: theme.colors.border, backgroundColor: theme.colors.background }]}>
-          <Picker selectedValue={sourceItemId} onValueChange={setSourceItemId} style={{ color: theme.colors.textPrimary }}>
+          <Picker selectedValue={sourceItemId} onValueChange={setSourceItemId} style={{ color: theme.colors.textPrimary }} enabled={canTransferBetweenBranches && !!sourceBranchId}>
             <Picker.Item label="Select inventory item" value="" />
             {inventory.map((item) => (
               <Picker.Item
@@ -180,6 +193,7 @@ export default function StockTransferScreen({ navigation, route }) {
           icon="swap-horiz"
           onPress={handleTransfer}
           loading={saving}
+          disabled={!canTransferBetweenBranches}
         />
       </Card>
 

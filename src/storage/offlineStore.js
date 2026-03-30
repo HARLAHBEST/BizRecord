@@ -23,6 +23,12 @@ const entityTableMap = {
 };
 
 const getEntityTable = (entityType) => entityTableMap[entityType] || null;
+const branchScopedTables = [
+  'local_inventory',
+  'local_transactions',
+  'local_debts',
+  'local_customers',
+];
 
 // Mark a row and outbox action as conflict
 export async function markConflict(entityType, localId, actionId) {
@@ -72,6 +78,7 @@ export async function cacheWorkspaces(workspaces) {
   try {
     const now = Date.now();
     const list = Array.isArray(workspaces) ? workspaces : [];
+    await executeSql("DELETE FROM local_workspaces WHERE COALESCE(sync_status, 'synced') = 'synced'");
     for (const workspace of list) {
       const id = workspace?.id != null ? String(workspace.id) : null;
       if (!id) continue;
@@ -97,6 +104,54 @@ export async function cacheWorkspaces(workspaces) {
   } catch {
     // ignore cache errors
   }
+}
+
+export async function clearWorkspaceCache() {
+  await executeSql('DELETE FROM local_workspaces');
+}
+
+export async function clearBranchScopedOfflineData() {
+  for (const table of branchScopedTables) {
+    await executeSql(`DELETE FROM ${table}`);
+  }
+  await executeSql('DELETE FROM sync_outbox');
+  await executeSql("DELETE FROM id_mapping WHERE entity_type IN ('inventory', 'transaction', 'debt', 'customer', 'workspace')");
+}
+
+export async function clearAllOfflineData() {
+  await clearWorkspaceCache();
+  await clearBranchScopedOfflineData();
+}
+
+export async function pruneBranchScopedData(allowedBranchIds = []) {
+  const allowed = Array.isArray(allowedBranchIds)
+    ? allowedBranchIds
+        .filter((value) => value != null && value !== '')
+        .map((value) => String(value))
+    : [];
+
+  if (allowed.length === 0) {
+    await clearBranchScopedOfflineData();
+    return;
+  }
+
+  const placeholders = allowed.map(() => '?').join(', ');
+  const deleteParams = [...allowed, ...allowed];
+
+  for (const table of branchScopedTables) {
+    await executeSql(
+      `DELETE FROM ${table}
+       WHERE COALESCE(workspace_local_id, '') NOT IN (${placeholders})
+         AND COALESCE(workspace_server_id, '') NOT IN (${placeholders})`,
+      deleteParams,
+    );
+  }
+
+  await executeSql(
+    `DELETE FROM sync_outbox
+     WHERE COALESCE(workspace_ref, '') NOT IN (${placeholders})`,
+    allowed,
+  );
 }
 
 export async function getLocalInventory(workspaceLocalId) {
@@ -374,11 +429,18 @@ export async function getCachedDebts(workspaceId) {
   }
 }
 
-export async function cacheTransactions(workspaceId, type, transactions) {
+export async function cacheTransactions(workspaceId, type, transactions, replaceExisting = false) {
   try {
     const now = Date.now();
     const workspaceRef = localWorkspaceId(workspaceId);
     const list = Array.isArray(transactions) ? transactions : [];
+
+    if (replaceExisting) {
+      await executeSql(
+        "DELETE FROM local_transactions WHERE (workspace_local_id = ? OR workspace_server_id = ?) AND COALESCE(sync_status, 'synced') = 'synced'",
+        [workspaceRef, workspaceRef]
+      );
+    }
 
     for (const item of list) {
       const transactionType = (item?.type || type || '').toLowerCase();

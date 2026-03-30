@@ -31,7 +31,7 @@ const PERMISSIONS = [
 
 export default function BranchDetailScreen({ navigation, route }) {
   const { theme } = useTheme();
-  const { currentWorkspaceId } = useWorkspace();
+  const { currentWorkspaceId, branches } = useWorkspace();
   const branchId = route?.params?.branchId;
   const [details, setDetails] = useState(null);
   const [workspaceOverview, setWorkspaceOverview] = useState(null);
@@ -250,12 +250,16 @@ export default function BranchDetailScreen({ navigation, route }) {
                 <AppButton
                   title="Stock Transfer"
                   icon="swap-horiz"
-                  onPress={() =>
+                  onPress={() => {
+                    if ((branches || []).length < 2) {
+                      Alert.alert('Stock transfer', 'You need at least two accessible branches before transferring stock.');
+                      return;
+                    }
                     navigation.push('StockTransfer', {
                       sourceBranchId: branchId,
                       sourceBranchName: branch.name,
-                    })
-                  }
+                    });
+                  }}
                   style={{ flex: 1 }}
                 />
               </View>

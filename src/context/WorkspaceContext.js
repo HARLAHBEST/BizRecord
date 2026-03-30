@@ -194,7 +194,7 @@ async function syncCoordinatorWorker({ token, currentWorkspaceId, currentBranchI
     syncWorkerActive = false;
   }
 }
-import React, { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from './AuthContext';
 import { api } from '../api/client';
@@ -252,7 +252,8 @@ const parseActionRoute = (path = '') => {
 };
 
 export const WorkspaceProvider = function({ children }) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const previousSessionRef = useRef(null);
 
   const [workspaces, setWorkspaces] = useState([]);
   const [branches, setBranches] = useState([]);
@@ -591,6 +592,33 @@ export const WorkspaceProvider = function({ children }) {
 
   const workspaceAccessBlocked = !!currentWorkspace && String(currentWorkspace?.status || 'active').toLowerCase() !== 'active';
 
+  const clearPersistedWorkspaceSelections = useCallback(async () => {
+    try {
+      await AsyncStorage.multiRemove([
+        WORKSPACE_STORAGE_KEY,
+        BRANCH_STORAGE_KEY,
+        OFFLINE_QUEUE_KEY,
+        LAST_SYNC_STORAGE_KEY,
+      ]);
+    } catch (err) {
+      // ignore
+    }
+  }, []);
+
+  const resetWorkspaceState = useCallback(async ({ clearOffline = false } = {}) => {
+    if (clearOffline) {
+      await offlineStore.clearAllOfflineData();
+    }
+    await clearPersistedWorkspaceSelections();
+    setWorkspaces([]);
+    setBranches([]);
+    setCurrentWorkspaceId(null);
+    setCurrentBranchId(null);
+    setPendingActions([]);
+    setLastSyncedAt(null);
+    setIsSyncing(false);
+  }, [clearPersistedWorkspaceSelections]);
+
   // Applies the offline workspace list from SQLite.  If the table is empty
   // (e.g. first launch after an old code version that never populated it),
   // synthesises a minimal workspace entry from the persisted workspace ID so
@@ -608,11 +636,8 @@ export const WorkspaceProvider = function({ children }) {
     } else {
       // local_workspaces table is empty — fall back to the stored workspace ID
       // so the user can still navigate to MainTabs and see any cached screen data.
-      const storedId = await AsyncStorage.getItem(WORKSPACE_STORAGE_KEY);
-      if (storedId) {
-        setWorkspaces([{ id: storedId, name: 'My Workspace' }]);
-        setCurrentWorkspaceId(storedId);
-      }
+      setWorkspaces([]);
+      setCurrentWorkspaceId(null);
       // If no stored ID, workspaces stays empty → WorkspaceSetupScreen is correct
     }
   }, []); // useState setters are stable; no reactive deps needed
@@ -620,7 +645,9 @@ export const WorkspaceProvider = function({ children }) {
   const loadWorkspaces = useCallback(async () => {
     if (!token) {
       setWorkspaces([]);
+      setBranches([]);
       setCurrentWorkspaceId(null);
+      setCurrentBranchId(null);
       setLoading(false);
       return;
     }
@@ -642,13 +669,13 @@ export const WorkspaceProvider = function({ children }) {
         return;
       }
 
-      await applyOfflineWorkspacesFallback();
+      await resetWorkspaceState({ clearOffline: true });
     } catch (err) {
       await applyOfflineWorkspacesFallback();
     } finally {
       setLoading(false);
     }
-  }, [token, applyOfflineWorkspacesFallback]);
+  }, [token, applyOfflineWorkspacesFallback, resetWorkspaceState]);
 
   const loadBranches = useCallback(async (workspaceId) => {
     if (!token || !workspaceId) {
@@ -687,7 +714,7 @@ export const WorkspaceProvider = function({ children }) {
         await offlineStore.cacheInventory(branchId, inventory);
       }
       if (Array.isArray(transactions)) {
-        await offlineStore.cacheTransactions(branchId, null, transactions);
+        await offlineStore.cacheTransactions(branchId, null, transactions, true);
         await offlineStore.cacheDebts(
           branchId,
           transactions.filter((item) => String(item?.type || '').toLowerCase() === 'debt')
@@ -707,6 +734,31 @@ export const WorkspaceProvider = function({ children }) {
     loadPendingActions();
     loadLastSyncedAt();
   }, []);
+
+  useEffect(() => {
+    const nextSessionKey = user?.id != null
+      ? `user:${user.id}`
+      : user?.email
+      ? `email:${String(user.email).trim().toLowerCase()}`
+      : null;
+
+    if (!nextSessionKey) {
+      if (previousSessionRef.current) {
+        resetWorkspaceState({ clearOffline: true }).catch(() => null);
+      }
+      previousSessionRef.current = null;
+      return;
+    }
+
+    const previousSessionKey = previousSessionRef.current;
+    previousSessionRef.current = nextSessionKey;
+
+    if (previousSessionKey && previousSessionKey !== nextSessionKey) {
+      resetWorkspaceState({ clearOffline: true })
+        .then(() => loadWorkspaces())
+        .catch(() => null);
+    }
+  }, [user, resetWorkspaceState, loadWorkspaces]);
 
   useEffect(() => {
     loadWorkspaces();
