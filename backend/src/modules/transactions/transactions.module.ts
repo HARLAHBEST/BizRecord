@@ -1,7 +1,10 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { TransactionsService } from './transactions.service';
-import { TransactionsController } from './transactions.controller';
+import {
+  TransactionsController,
+  WorkspaceTransactionsController,
+} from './transactions.controller';
 import { Transaction } from './entities/transaction.entity';
 import { Workspace } from '../workspace/entities/workspace.entity';
 import { User } from '../auth/entities/user.entity';
@@ -16,7 +19,7 @@ import { Branch } from '../workspace/entities/branch.entity';
     WorkspaceModule,
   ],
   providers: [TransactionsService, ReceiptService],
-  controllers: [TransactionsController],
+  controllers: [TransactionsController, WorkspaceTransactionsController],
   exports: [TransactionsService],
 })
 export class TransactionsModule {}

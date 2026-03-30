@@ -17,6 +17,10 @@ export default function AddCustomerScreen({ navigation, route }) {
   const [address, setAddress] = useState('');
   const [loading, setLoading] = useState(false);
   const selectAfterCreate = !!route?.params?.selectAfterCreate;
+  const customerPath = activeBranchId
+    ? `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/customers`
+    : `/workspaces/${currentWorkspaceId}/customers`;
+  const customerScopeId = activeBranchId || currentWorkspaceId;
 
   const handleAdd = async () => {
     if (!name.trim()) {
@@ -26,16 +30,16 @@ export default function AddCustomerScreen({ navigation, route }) {
     setLoading(true);
     try {
       const payload = { name, email, phone, address };
-      const result = await api.post(`/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/customers`, payload);
+      const result = await api.post(customerPath, payload);
       const createdCustomer = { ...payload, ...(result || {}), id: result?.id ?? null };
-      const localId = result?.id ? `customer_${activeBranchId}_${result.id}` : `local_customer_${Date.now()}`;
+      const localId = result?.id ? `customer_${customerScopeId}_${result.id}` : `local_customer_${Date.now()}`;
       await upsertLocalCustomer({
         local_id: localId,
         server_id: result?.id ? String(result.id) : null,
-        workspace_server_id: activeBranchId,
+        workspace_server_id: customerScopeId,
         data: { ...createdCustomer, id: createdCustomer.id ?? localId, local_id: localId },
         sync_status: 'synced',
-      }, activeBranchId);
+      }, customerScopeId);
       if (result?.id) {
         await setIdMapping('customer', localId, String(result.id));
       }
@@ -50,13 +54,13 @@ export default function AddCustomerScreen({ navigation, route }) {
         await upsertLocalCustomer({
           local_id: localId,
           server_id: null,
-          workspace_server_id: activeBranchId,
+          workspace_server_id: customerScopeId,
           data: { ...localCustomer, local_id: localId },
           sync_status: 'pending_create',
-        }, activeBranchId);
+        }, customerScopeId);
         await queueAction({
           method: 'post',
-          path: `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/customers`,
+          path: customerPath,
           body: { name, email, phone, address },
         });
         if (selectAfterCreate) {

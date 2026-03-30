@@ -19,17 +19,21 @@ export default function CustomerListScreen({ navigation }) {
   const { setSelectedCustomer } = useCustomerSelect();
   const route = useRoute();
   const selectMode = route.params?.selectMode;
+  const customerPath = activeBranchId
+    ? `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/customers`
+    : `/workspaces/${currentWorkspaceId}/customers`;
+  const customerScopeId = activeBranchId || currentWorkspaceId;
 
   const loadCustomers = async () => {
-    if (!currentWorkspaceId || !activeBranchId) return;
+    if (!currentWorkspaceId) return;
     setLoading(true);
     try {
-      const data = await api.get(`/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/customers`, search ? { search } : undefined);
+      const data = await api.get(customerPath, search ? { search } : undefined);
       const list = Array.isArray(data) ? data : [];
       setCustomers(list);
-      cacheCustomers(activeBranchId, list).catch(() => null);
+      cacheCustomers(customerScopeId, list).catch(() => null);
     } catch (err) {
-      const cached = await getCachedCustomers(activeBranchId, search);
+      const cached = await getCachedCustomers(customerScopeId, search);
       setCustomers(Array.isArray(cached) ? cached : []);
     } finally {
       setLoading(false);
@@ -39,19 +43,19 @@ export default function CustomerListScreen({ navigation }) {
   useFocusEffect(
     useCallback(() => {
       loadCustomers();
-    }, [currentWorkspaceId, activeBranchId, search]),
+    }, [currentWorkspaceId, customerPath, customerScopeId, search]),
   );
 
   const handleDelete = async (id) => {
-    if (!currentWorkspaceId || !activeBranchId) return;
+    if (!currentWorkspaceId) return;
     try {
-      await api.delete(`/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/customers/${id}`);
+      await api.delete(`${customerPath}/${id}`);
       loadCustomers();
     } catch (err) {
       if (!err?.response && queueAction) {
         await queueAction({
           method: 'delete',
-          path: `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/customers/${id}`,
+          path: `${customerPath}/${id}`,
         });
         loadCustomers();
       } else {

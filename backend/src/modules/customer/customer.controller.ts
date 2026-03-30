@@ -27,7 +27,12 @@ export class CustomerController {
     @Body() dto: CreateCustomerDto,
     @Request() req,
   ) {
-    return this.customerService.create(workspaceId, branchId, req.user.sub, dto);
+    return this.customerService.create(
+      workspaceId,
+      branchId || null,
+      req.user.sub,
+      dto,
+    );
   }
 
   @Get()
@@ -37,7 +42,12 @@ export class CustomerController {
     @Request() req,
     @Query('search') search?: string,
   ) {
-    return this.customerService.findAll(workspaceId, branchId, req.user.sub, search);
+    return this.customerService.findAll(
+      workspaceId,
+      branchId || null,
+      req.user.sub,
+      search,
+    );
   }
 
   @Get(':id')
@@ -47,7 +57,12 @@ export class CustomerController {
     @Param('id') id: string,
     @Request() req,
   ) {
-    return this.customerService.findOne(workspaceId, branchId, id, req.user.sub);
+    return this.customerService.findOne(
+      workspaceId,
+      branchId || null,
+      id,
+      req.user.sub,
+    );
   }
 
   @Put(':id')
@@ -58,7 +73,13 @@ export class CustomerController {
     @Body() dto: UpdateCustomerDto,
     @Request() req,
   ) {
-    return this.customerService.update(workspaceId, branchId, id, req.user.sub, dto);
+    return this.customerService.update(
+      workspaceId,
+      branchId || null,
+      id,
+      req.user.sub,
+      dto,
+    );
   }
 
   @Delete(':id')
@@ -68,6 +89,63 @@ export class CustomerController {
     @Param('id') id: string,
     @Request() req,
   ) {
-    return this.customerService.remove(workspaceId, branchId, id, req.user.sub);
+    return this.customerService.remove(
+      workspaceId,
+      branchId || null,
+      id,
+      req.user.sub,
+    );
+  }
+}
+
+@Controller('workspaces/:workspaceId/customers')
+@UseGuards(JwtAuthGuard)
+export class WorkspaceCustomerController {
+  constructor(private readonly customerService: CustomerService) {}
+
+  @Post()
+  async create(
+    @Param('workspaceId') workspaceId: string,
+    @Body() dto: CreateCustomerDto,
+    @Request() req,
+  ) {
+    return this.customerService.create(workspaceId, null, req.user.sub, dto);
+  }
+
+  @Get()
+  async findAll(
+    @Param('workspaceId') workspaceId: string,
+    @Request() req,
+    @Query('search') search?: string,
+  ) {
+    return this.customerService.findAll(workspaceId, null, req.user.sub, search);
+  }
+
+  @Get(':id')
+  async findOne(
+    @Param('workspaceId') workspaceId: string,
+    @Param('id') id: string,
+    @Request() req,
+  ) {
+    return this.customerService.findOne(workspaceId, null, id, req.user.sub);
+  }
+
+  @Put(':id')
+  async update(
+    @Param('workspaceId') workspaceId: string,
+    @Param('id') id: string,
+    @Body() dto: UpdateCustomerDto,
+    @Request() req,
+  ) {
+    return this.customerService.update(workspaceId, null, id, req.user.sub, dto);
+  }
+
+  @Delete(':id')
+  async remove(
+    @Param('workspaceId') workspaceId: string,
+    @Param('id') id: string,
+    @Request() req,
+  ) {
+    return this.customerService.remove(workspaceId, null, id, req.user.sub);
   }
 }

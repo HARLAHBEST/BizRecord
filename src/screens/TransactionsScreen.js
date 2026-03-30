@@ -15,10 +15,14 @@ export default function TransactionsScreen({ navigation }) {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(false);
   const contentWidth = Math.min(width - 24, 860);
+  const transactionPath = activeBranchId
+    ? `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`
+    : `/workspaces/${currentWorkspaceId}/transactions`;
+  const transactionScopeId = activeBranchId || currentWorkspaceId;
 
   useEffect(() => {
     const loadTransactions = async () => {
-      if (!currentWorkspaceId || !activeBranchId) {
+      if (!currentWorkspaceId) {
         setTransactions([]);
         return;
       }
@@ -43,12 +47,12 @@ export default function TransactionsScreen({ navigation }) {
           setTransactions(localList);
         }
 
-        const data = await api.get(`/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`, { take: 50 });
+        const data = await api.get(transactionPath, { take: 50 });
         const list = Array.isArray(data) ? data : [];
         setTransactions(list);
-        cacheTransactions(activeBranchId, null, list).catch(() => null);
+        cacheTransactions(transactionScopeId, null, list).catch(() => null);
       } catch (err) {
-        const cached = await getCachedTransactions(activeBranchId);
+        const cached = await getCachedTransactions(transactionScopeId);
         setTransactions(Array.isArray(cached) ? cached : []);
       } finally {
         setLoading(false);
@@ -56,7 +60,7 @@ export default function TransactionsScreen({ navigation }) {
     };
 
     loadTransactions();
-  }, [currentWorkspaceId, activeBranchId, repo]);
+  }, [currentWorkspaceId, transactionPath, transactionScopeId, repo]);
 
   const renderAmount = useMemo(() => {
     return (item) => `₦${Number(item.totalAmount || 0).toLocaleString()}`;

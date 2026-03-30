@@ -16,6 +16,10 @@ export default function EditCustomerScreen({ route, navigation }) {
   const [phone, setPhone] = useState(customer?.phone || '');
   const [address, setAddress] = useState(customer?.address || '');
   const [loading, setLoading] = useState(false);
+  const customerPath = activeBranchId
+    ? `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/customers`
+    : `/workspaces/${currentWorkspaceId}/customers`;
+  const customerScopeId = activeBranchId || currentWorkspaceId;
 
   const handleUpdate = async () => {
     if (!name.trim()) {
@@ -26,27 +30,27 @@ export default function EditCustomerScreen({ route, navigation }) {
     try {
       const payload = { name, email, phone, address };
       const localId = customer.local_id || customer.id;
-      await api.put(`/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/customers/${customer.id}`, payload);
+      await api.put(`${customerPath}/${customer.id}`, payload);
       await upsertLocalCustomer({
         local_id: localId,
         server_id: String(customer.id),
-        workspace_server_id: activeBranchId,
+        workspace_server_id: customerScopeId,
         data: { ...customer, ...payload, id: customer.id, local_id: localId },
         sync_status: 'synced',
-      }, activeBranchId);
+      }, customerScopeId);
       navigation.goBack();
     } catch (err) {
       if (!err?.response && queueAction) {
         await upsertLocalCustomer({
           local_id: customer.local_id || customer.id,
           server_id: String(customer.id).startsWith('local_') ? null : String(customer.id),
-          workspace_server_id: activeBranchId,
+          workspace_server_id: customerScopeId,
           data: { ...customer, name, email, phone, address, id: customer.id, local_id: customer.local_id || customer.id },
           sync_status: 'pending_update',
-        }, activeBranchId);
+        }, customerScopeId);
         await queueAction({
           method: 'put',
-          path: `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/customers/${customer.id}`,
+          path: `${customerPath}/${customer.id}`,
           body: { name, email, phone, address },
         });
         Alert.alert('Offline', 'Customer update saved locally and will sync once online');

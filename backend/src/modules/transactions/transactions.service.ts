@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { isUUID } from 'class-validator';
 import { Transaction } from './entities/transaction.entity';
 import { Workspace } from '../workspace/entities/workspace.entity';
@@ -35,50 +35,64 @@ export class TransactionsService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
+  private async assertTransactionScope(
+    workspaceId: string,
+    branchId: string | null,
+    userId: string,
+    permission:
+      | 'sales.view'
+      | 'sales.create'
+      | 'debts.view'
+      | 'debts.manage'
+      | 'inventory.manage'
+      | 'reports.view',
+  ) {
+    if (branchId) {
+      const access = await this.branchAccessService.assertBranchPermission(
+        workspaceId,
+        branchId,
+        userId,
+        permission,
+      );
+      return {
+        workspace: access.branch.workspace,
+        branch: access.branch,
+        user: access.user,
+      };
+    }
+
+    const ownerAccess = await this.branchAccessService.assertWorkspaceOwnerLike(
+      workspaceId,
+      userId,
+    );
+    return {
+      workspace: ownerAccess.workspace,
+      branch: null,
+      user: ownerAccess.user,
+    };
+  }
+
   async createTransaction(
     createTransactionDto: CreateTransactionDto,
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     userId: string,
   ) {
     const normalizedType = String(createTransactionDto.type || '').toLowerCase();
     const minimumRole =
       normalizedType === 'sale' ? 'staff' : 'manager';
-    if (normalizedType === 'sale') {
-      await this.branchAccessService.assertBranchPermission(
-        workspaceId,
-        branchId,
-        userId,
-        'sales.create',
-      );
-    } else if (normalizedType === 'debt') {
-      await this.branchAccessService.assertBranchPermission(
-        workspaceId,
-        branchId,
-        userId,
-        'debts.manage',
-      );
-    } else {
-      await this.branchAccessService.assertBranchPermission(
-        workspaceId,
-        branchId,
-        userId,
-        'inventory.manage',
-      );
-    }
-    const { branch, user } = await this.branchAccessService.assertBranchAccess(
+    const permission =
+      normalizedType === 'sale'
+        ? 'sales.create'
+        : normalizedType === 'debt'
+          ? 'debts.manage'
+          : 'inventory.manage';
+    const { branch, user, workspace } = await this.assertTransactionScope(
       workspaceId,
       branchId,
       userId,
-      { minimumRole },
+      permission,
     );
-    const workspace = await this.workspacesRepository.findOne({
-      where: { id: workspaceId },
-    });
-
-    if (!workspace) {
-      throw new NotFoundException('Workspace not found');
-    }
 
     let item: InventoryItem | null = null;
     let quantity = Number(createTransactionDto.quantity || 0);
@@ -100,11 +114,17 @@ export class TransactionsService {
       }
 
       item = await this.itemsRepository.findOne({
-        where: {
-          id: createTransactionDto.itemId,
-          workspaceId,
-          branchId,
-        },
+        where: branchId
+          ? {
+              id: createTransactionDto.itemId,
+              workspaceId,
+              branchId,
+            }
+          : {
+              id: createTransactionDto.itemId,
+              workspaceId,
+              branchId: IsNull(),
+            },
         relations: ['workspace', 'branch'],
       });
 
@@ -156,8 +176,8 @@ export class TransactionsService {
       }),
       workspace,
       workspaceId,
-      branch,
-      branchId,
+      branch: branch || undefined,
+      branchId: branch?.id || null,
       createdBy: user,
     });
 
@@ -176,7 +196,7 @@ export class TransactionsService {
     }
     await this.auditLogService.log({
       workspaceId,
-      branchId,
+      branchId: branchId || undefined,
       actorUserId: userId,
       action: `transaction.create.${transaction.type}`,
       entityType: 'transaction',
@@ -192,31 +212,27 @@ export class TransactionsService {
 
   async getTransactions(
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     userId: string,
     skip = 0,
     take = 20,
     type?: string,
   ) {
-    if (type === 'debt') {
-      await this.branchAccessService.assertBranchPermission(
-        workspaceId,
-        branchId,
-        userId,
-        'debts.view',
-      );
-    } else {
-      await this.branchAccessService.assertBranchPermission(
-        workspaceId,
-        branchId,
-        userId,
-        'sales.view',
-      );
-    }
+    await this.assertTransactionScope(
+      workspaceId,
+      branchId,
+      userId,
+      type === 'debt' ? 'debts.view' : 'sales.view',
+    );
     const query = this.transactionsRepository
       .createQueryBuilder('transaction')
-      .where('transaction.workspace_id = :workspaceId', { workspaceId })
-      .andWhere('transaction.branch_id = :branchId', { branchId });
+      .where('transaction.workspace_id = :workspaceId', { workspaceId });
+
+    if (branchId) {
+      query.andWhere('transaction.branch_id = :branchId', { branchId });
+    } else {
+      query.andWhere('transaction.branch_id IS NULL');
+    }
 
     if (type) {
       query.andWhere('transaction.type = :type', { type });
@@ -231,18 +247,15 @@ export class TransactionsService {
 
   async getTransaction(
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     transactionId: string,
     userId: string,
   ) {
-    await this.branchAccessService.assertBranchPermission(
-      workspaceId,
-      branchId,
-      userId,
-      'sales.view',
-    );
+    await this.assertTransactionScope(workspaceId, branchId, userId, 'sales.view');
     const transaction = await this.transactionsRepository.findOne({
-      where: { id: transactionId, workspaceId, branchId },
+      where: branchId
+        ? { id: transactionId, workspaceId, branchId }
+        : { id: transactionId, workspaceId, branchId: IsNull() },
       relations: ['workspace', 'branch', 'createdBy', 'item'],
     });
 
@@ -255,12 +268,12 @@ export class TransactionsService {
 
   async updateTransactionStatus(
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     transactionId: string,
     status: 'pending' | 'completed' | 'cancelled',
     userId: string,
   ) {
-    await this.branchAccessService.assertBranchPermission(
+    await this.assertTransactionScope(
       workspaceId,
       branchId,
       userId,
@@ -276,7 +289,7 @@ export class TransactionsService {
     const saved = await this.transactionsRepository.save(transaction);
     await this.auditLogService.log({
       workspaceId,
-      branchId,
+      branchId: branchId || undefined,
       actorUserId: userId,
       action: 'transaction.status.update',
       entityType: 'transaction',
@@ -288,22 +301,22 @@ export class TransactionsService {
 
   async getSummary(
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     userId: string,
     startDate: Date,
     endDate: Date,
   ) {
-    await this.branchAccessService.assertBranchPermission(
-      workspaceId,
-      branchId,
-      userId,
-      'reports.view',
-    );
+    await this.assertTransactionScope(workspaceId, branchId, userId, 'reports.view');
     const transactions = await this.transactionsRepository.find({
-      where: {
-        workspaceId,
-        branchId,
-      },
+      where: branchId
+        ? {
+            workspaceId,
+            branchId,
+          }
+        : {
+            workspaceId,
+            branchId: IsNull(),
+          },
       relations: ['item'],
     });
 

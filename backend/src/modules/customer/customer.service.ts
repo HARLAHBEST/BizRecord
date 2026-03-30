@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { Customer } from './customer.entity';
 import { Workspace } from '../workspace/entities/workspace.entity';
 import { Branch } from '../workspace/entities/branch.entity';
@@ -22,37 +22,58 @@ export class CustomerService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
+  private async assertCustomerScope(
+    workspaceId: string,
+    branchId: string | null,
+    userId: string,
+    permission: 'customers.view' | 'customers.manage',
+  ) {
+    if (branchId) {
+      const access = await this.branchAccessService.assertBranchPermission(
+        workspaceId,
+        branchId,
+        userId,
+        permission,
+      );
+      return {
+        workspace: access.branch.workspace,
+        branch: access.branch,
+      };
+    }
+
+    const { workspace } = await this.branchAccessService.assertWorkspaceOwnerLike(
+      workspaceId,
+      userId,
+    );
+    return {
+      workspace,
+      branch: null,
+    };
+  }
+
   async create(
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     userId: string,
     dto: CreateCustomerDto,
   ) {
-    await this.branchAccessService.assertBranchPermission(
+    const { workspace, branch } = await this.assertCustomerScope(
       workspaceId,
       branchId,
       userId,
       'customers.manage',
     );
-    const workspace = await this.workspaceRepository.findOne({
-      where: { id: workspaceId },
-    });
-    if (!workspace) throw new NotFoundException('Workspace not found');
-    const branch = await this.branchRepository.findOne({
-      where: { id: branchId, workspaceId },
-    });
-    if (!branch) throw new NotFoundException('Branch not found');
     const customer = this.customerRepository.create({
       ...dto,
       workspace,
       workspaceId,
-      branch,
-      branchId,
+      branch: branch || null,
+      branchId: branch?.id || null,
     });
     const saved = await this.customerRepository.save(customer);
     await this.auditLogService.log({
       workspaceId,
-      branchId,
+      branchId: branchId || undefined,
       actorUserId: userId,
       action: 'customer.create',
       entityType: 'customer',
@@ -64,20 +85,19 @@ export class CustomerService {
 
   async findAll(
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     userId: string,
     search?: string,
   ) {
-    await this.branchAccessService.assertBranchPermission(
-      workspaceId,
-      branchId,
-      userId,
-      'customers.view',
-    );
+    await this.assertCustomerScope(workspaceId, branchId, userId, 'customers.view');
     const qb = this.customerRepository
       .createQueryBuilder('customer')
-      .where('customer.workspaceId = :workspaceId', { workspaceId })
-      .andWhere('customer.branchId = :branchId', { branchId });
+      .where('customer.workspaceId = :workspaceId', { workspaceId });
+    if (branchId) {
+      qb.andWhere('customer.branchId = :branchId', { branchId });
+    } else {
+      qb.andWhere('customer.branchId IS NULL');
+    }
     if (search) {
       qb.andWhere(
         '(customer.name ILIKE :search OR customer.email ILIKE :search OR customer.phone ILIKE :search)',
@@ -89,24 +109,21 @@ export class CustomerService {
 
   async findOne(
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     id: string,
     userId: string,
   ) {
-    await this.branchAccessService.assertBranchPermission(
-      workspaceId,
-      branchId,
-      userId,
-      'customers.view',
-    );
+    await this.assertCustomerScope(workspaceId, branchId, userId, 'customers.view');
     return this.customerRepository.findOne({
-      where: { id, workspaceId, branchId },
+      where: branchId
+        ? { id, workspaceId, branchId }
+        : { id, workspaceId, branchId: IsNull() },
     });
   }
 
   async update(
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     id: string,
     userId: string,
     dto: UpdateCustomerDto,
@@ -117,7 +134,7 @@ export class CustomerService {
     const saved = await this.customerRepository.save(customer);
     await this.auditLogService.log({
       workspaceId,
-      branchId,
+      branchId: branchId || undefined,
       actorUserId: userId,
       action: 'customer.update',
       entityType: 'customer',
@@ -129,7 +146,7 @@ export class CustomerService {
 
   async remove(
     workspaceId: string,
-    branchId: string,
+    branchId: string | null,
     id: string,
     userId: string,
   ) {
@@ -138,7 +155,7 @@ export class CustomerService {
     await this.customerRepository.remove(customer);
     await this.auditLogService.log({
       workspaceId,
-      branchId,
+      branchId: branchId || undefined,
       actorUserId: userId,
       action: 'customer.delete',
       entityType: 'customer',

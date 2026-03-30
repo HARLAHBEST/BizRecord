@@ -37,6 +37,10 @@ export default function RecordExpenseScreen({ navigation }) {
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
+  const transactionPath = activeBranchId
+    ? `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`
+    : `/workspaces/${currentWorkspaceId}/transactions`;
+  const transactionScopeId = activeBranchId || currentWorkspaceId;
 
   const handleSubmit = async () => {
     if (!category || !amount) {
@@ -44,7 +48,7 @@ export default function RecordExpenseScreen({ navigation }) {
       return;
     }
 
-    if (!currentWorkspaceId || !activeBranchId) {
+    if (!currentWorkspaceId) {
       Alert.alert(
         'Workspace required',
         'Please select a workspace before recording an expense',
@@ -77,15 +81,12 @@ export default function RecordExpenseScreen({ navigation }) {
       .toString(16)
       .slice(2)}`;
     try {
-      const result = await api.post(
-        `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`,
-        payload,
-      );
+      const result = await api.post(transactionPath, payload);
       await upsertLocalTransaction(
         {
           local_id: localId,
           server_id: result?.id ? String(result.id) : null,
-          workspace_server_id: activeBranchId,
+          workspace_server_id: transactionScopeId,
           data: {
             ...payload,
             ...(result || {}),
@@ -94,7 +95,7 @@ export default function RecordExpenseScreen({ navigation }) {
           },
           sync_status: 'synced',
         },
-        currentWorkspaceId,
+        transactionScopeId,
       );
       if (result?.id) {
         await setIdMapping('transaction', localId, String(result.id));
@@ -116,7 +117,7 @@ export default function RecordExpenseScreen({ navigation }) {
       if (queueAction && !err?.response) {
         await queueAction({
           method: 'post',
-          path: `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`,
+          path: transactionPath,
           body: payload,
         });
         Alert.alert('Offline', 'Expense queued and will sync once online.', [

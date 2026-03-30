@@ -31,22 +31,29 @@ export default function RecordDebtScreen({ navigation }) {
   const [dueInDays, setDueInDays] = useState('7');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
+  const customerPath = activeBranchId
+    ? `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/customers`
+    : `/workspaces/${currentWorkspaceId}/customers`;
+  const transactionPath = activeBranchId
+    ? `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`
+    : `/workspaces/${currentWorkspaceId}/transactions`;
+  const scopeId = activeBranchId || currentWorkspaceId;
 
   const loadCustomers = useCallback(async () => {
-    if (!currentWorkspaceId || !activeBranchId) {
+    if (!currentWorkspaceId) {
       setCustomers([]);
       return;
     }
     try {
-      const data = await api.get(`/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/customers`);
+      const data = await api.get(customerPath);
       const list = Array.isArray(data) ? data : [];
       setCustomers(list);
-      cacheCustomers(activeBranchId, list).catch(() => null);
+      cacheCustomers(scopeId, list).catch(() => null);
     } catch {
-      const cached = await getCachedCustomers(activeBranchId);
+      const cached = await getCachedCustomers(scopeId);
       setCustomers(Array.isArray(cached) ? cached : []);
     }
-  }, [currentWorkspaceId]);
+  }, [currentWorkspaceId, customerPath, scopeId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -55,7 +62,7 @@ export default function RecordDebtScreen({ navigation }) {
   );
 
   const handleSubmit = async () => {
-    if (!currentWorkspaceId || !activeBranchId) {
+    if (!currentWorkspaceId) {
       Alert.alert('Workspace required', 'Please select a workspace first');
       return;
     }
@@ -85,21 +92,21 @@ export default function RecordDebtScreen({ navigation }) {
     setLoading(true);
     const localId = `local_debt_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     try {
-      const result = await api.post(`/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`, payload);
+      const result = await api.post(transactionPath, payload);
       await upsertLocalDebt({
         local_id: localId,
         server_id: result?.id ? String(result.id) : null,
-        workspace_server_id: activeBranchId,
+        workspace_server_id: scopeId,
         data: { ...payload, ...(result || {}), id: result?.id ?? localId, local_id: localId },
         sync_status: 'synced',
-      }, activeBranchId);
+      }, scopeId);
       await upsertLocalTransaction({
         local_id: localId,
         server_id: result?.id ? String(result.id) : null,
-        workspace_server_id: activeBranchId,
+        workspace_server_id: scopeId,
         data: { ...payload, ...(result || {}), id: result?.id ?? localId, local_id: localId },
         sync_status: 'synced',
-      }, activeBranchId);
+      }, scopeId);
       if (result?.id) {
         await setIdMapping('debt', localId, String(result.id));
       }
@@ -110,7 +117,7 @@ export default function RecordDebtScreen({ navigation }) {
       if (queueAction) {
         await queueAction({
           method: 'post',
-          path: `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`,
+          path: transactionPath,
           body: payload,
         });
         Alert.alert('Offline', 'Debt queued and will sync once online', [

@@ -39,6 +39,14 @@ async function syncCoordinatorWorker({ token, currentWorkspaceId, currentBranchI
         scopeId && String(scopeId) !== String(currentWorkspaceId)
           ? `/workspaces/${currentWorkspaceId}/branches/${scopeId}/inventory`
           : `/workspaces/${currentWorkspaceId}/inventory`;
+      const transactionsBasePath =
+        scopeId && String(scopeId) !== String(currentWorkspaceId)
+          ? `/workspaces/${currentWorkspaceId}/branches/${scopeId}/transactions`
+          : `/workspaces/${currentWorkspaceId}/transactions`;
+      const customersBasePath =
+        scopeId && String(scopeId) !== String(currentWorkspaceId)
+          ? `/workspaces/${currentWorkspaceId}/branches/${scopeId}/customers`
+          : `/workspaces/${currentWorkspaceId}/customers`;
       try {
         const payload = action.payload ? JSON.parse(action.payload) : undefined;
         let apiRes = null;
@@ -66,9 +74,9 @@ async function syncCoordinatorWorker({ token, currentWorkspaceId, currentBranchI
             if (entityType === 'inventory') {
               remoteRow = await api.get(`${inventoryBasePath}/${serverId}`);
             } else if (entityType === 'transaction' || entityType === 'debt') {
-              remoteRow = await api.get(`/workspaces/${currentWorkspaceId}/branches/${scopeId}/transactions/${serverId}`);
+              remoteRow = await api.get(`${transactionsBasePath}/${serverId}`);
             } else if (entityType === 'customer') {
-              remoteRow = await api.get(`/workspaces/${currentWorkspaceId}/branches/${scopeId}/customers/${serverId}`);
+              remoteRow = await api.get(`${customersBasePath}/${serverId}`);
             }
             remoteUpdated = new Date(remoteRow?.updatedAt || remoteRow?.updated_at || 0).getTime();
             // If both changed since last sync, mark conflict
@@ -107,32 +115,32 @@ async function syncCoordinatorWorker({ token, currentWorkspaceId, currentBranchI
             }
             syncPayload = { ...syncPayload, itemId: mappedItemId };
           }
-          apiRes = await api.post(`/workspaces/${currentWorkspaceId}/branches/${scopeId}/transactions`, syncPayload);
+          apiRes = await api.post(transactionsBasePath, syncPayload);
           if (apiRes?.id) {
             await offlineStore.setIdMapping('transaction', action.entity_local_id, apiRes.id);
           }
         } else if (action.action_type === 'update_transaction') {
-          apiRes = await api.put(`/workspaces/${currentWorkspaceId}/branches/${scopeId}/transactions/${serverId}`, syncPayload);
+          apiRes = await api.put(`${transactionsBasePath}/${serverId}`, syncPayload);
         } else if (action.action_type === 'delete_transaction') {
-          apiRes = await api.delete(`/workspaces/${currentWorkspaceId}/branches/${scopeId}/transactions/${serverId}`);
+          apiRes = await api.delete(`${transactionsBasePath}/${serverId}`);
         } else if (action.action_type === 'create_debt') {
-          apiRes = await api.post(`/workspaces/${currentWorkspaceId}/branches/${scopeId}/transactions`, syncPayload);
+          apiRes = await api.post(transactionsBasePath, syncPayload);
           if (apiRes?.id) {
             await offlineStore.setIdMapping('debt', action.entity_local_id, apiRes.id);
           }
         } else if (action.action_type === 'update_debt') {
-          apiRes = await api.put(`/workspaces/${currentWorkspaceId}/branches/${scopeId}/transactions/${serverId}`, syncPayload);
+          apiRes = await api.put(`${transactionsBasePath}/${serverId}`, syncPayload);
         } else if (action.action_type === 'delete_debt') {
-          apiRes = await api.delete(`/workspaces/${currentWorkspaceId}/branches/${scopeId}/transactions/${serverId}`);
+          apiRes = await api.delete(`${transactionsBasePath}/${serverId}`);
         } else if (action.action_type === 'create_customer') {
-          apiRes = await api.post(`/workspaces/${currentWorkspaceId}/branches/${scopeId}/customers`, syncPayload);
+          apiRes = await api.post(customersBasePath, syncPayload);
           if (apiRes?.id) {
             await offlineStore.setIdMapping('customer', action.entity_local_id, apiRes.id);
           }
         } else if (action.action_type === 'update_customer') {
-          apiRes = await api.put(`/workspaces/${currentWorkspaceId}/branches/${scopeId}/customers/${serverId}`, syncPayload);
+          apiRes = await api.put(`${customersBasePath}/${serverId}`, syncPayload);
         } else if (action.action_type === 'delete_customer') {
-          apiRes = await api.delete(`/workspaces/${currentWorkspaceId}/branches/${scopeId}/customers/${serverId}`);
+          apiRes = await api.delete(`${customersBasePath}/${serverId}`);
         }
 
         if (action.action_type.startsWith('create_')) {
@@ -256,6 +264,17 @@ const parseActionRoute = (path = '') => {
     };
   }
 
+  const workspaceTransactions = path.match(/^\/workspaces\/([^/]+)\/transactions(?:\/([^/]+))?$/);
+  if (workspaceTransactions) {
+    return {
+      workspaceId: workspaceTransactions[1],
+      branchId: null,
+      scopeId: workspaceTransactions[1],
+      domain: 'transactions',
+      targetId: workspaceTransactions[2] || null,
+    };
+  }
+
   const customers = path.match(/^\/workspaces\/([^/]+)\/branches\/([^/]+)\/customers(?:\/([^/]+))?$/);
   if (customers) {
     return {
@@ -264,6 +283,17 @@ const parseActionRoute = (path = '') => {
       scopeId: customers[2],
       domain: 'customers',
       targetId: customers[3] || null,
+    };
+  }
+
+  const workspaceCustomers = path.match(/^\/workspaces\/([^/]+)\/customers(?:\/([^/]+))?$/);
+  if (workspaceCustomers) {
+    return {
+      workspaceId: workspaceCustomers[1],
+      branchId: null,
+      scopeId: workspaceCustomers[1],
+      domain: 'customers',
+      targetId: workspaceCustomers[2] || null,
     };
   }
 
@@ -817,17 +847,17 @@ export const WorkspaceProvider = function({ children }) {
   // All local entity access must use currentWorkspaceId (local)
   const repo = useMemo(() => ({
     getInventory: () => offlineStore.getLocalInventory(currentBranchId || currentWorkspaceId),
-    getTransactions: () => offlineStore.getLocalTransactions(currentBranchId),
-    getDebts: () => offlineStore.getLocalDebts(currentBranchId),
-    getCustomers: () => offlineStore.getLocalCustomers(currentBranchId),
+    getTransactions: () => offlineStore.getLocalTransactions(currentBranchId || currentWorkspaceId),
+    getDebts: () => offlineStore.getLocalDebts(currentBranchId || currentWorkspaceId),
+    getCustomers: () => offlineStore.getLocalCustomers(currentBranchId || currentWorkspaceId),
     upsertInventory: (item) => offlineStore.upsertLocalInventory(item, currentBranchId || currentWorkspaceId),
-    upsertTransaction: (item) => offlineStore.upsertLocalTransaction(item, currentBranchId),
-    upsertDebt: (item) => offlineStore.upsertLocalDebt(item, currentBranchId),
-    upsertCustomer: (item) => offlineStore.upsertLocalCustomer(item, currentBranchId),
+    upsertTransaction: (item) => offlineStore.upsertLocalTransaction(item, currentBranchId || currentWorkspaceId),
+    upsertDebt: (item) => offlineStore.upsertLocalDebt(item, currentBranchId || currentWorkspaceId),
+    upsertCustomer: (item) => offlineStore.upsertLocalCustomer(item, currentBranchId || currentWorkspaceId),
     deleteInventory: (localId) => offlineStore.deleteLocalInventory(localId, currentBranchId || currentWorkspaceId),
-    deleteTransaction: (localId) => offlineStore.deleteLocalTransaction(localId, currentBranchId),
-    deleteDebt: (localId) => offlineStore.deleteLocalDebt(localId, currentBranchId),
-    deleteCustomer: (localId) => offlineStore.deleteLocalCustomer(localId, currentBranchId),
+    deleteTransaction: (localId) => offlineStore.deleteLocalTransaction(localId, currentBranchId || currentWorkspaceId),
+    deleteDebt: (localId) => offlineStore.deleteLocalDebt(localId, currentBranchId || currentWorkspaceId),
+    deleteCustomer: (localId) => offlineStore.deleteLocalCustomer(localId, currentBranchId || currentWorkspaceId),
     queueAction,
   }), [currentBranchId, currentWorkspaceId, queueAction]);
 

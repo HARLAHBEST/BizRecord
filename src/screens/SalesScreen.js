@@ -40,6 +40,10 @@ export default function SalesScreen({ navigation }) {
   const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const transactionPath = workspace.activeBranchId
+    ? `/workspaces/${workspace.currentWorkspaceId}/branches/${workspace.activeBranchId}/transactions`
+    : `/workspaces/${workspace.currentWorkspaceId}/transactions`;
+  const transactionScopeId = workspace.activeBranchId || workspace.currentWorkspaceId;
 
   const contentWidth = Math.min(width - 24, 860);
   const listPadding = width < 390 ? 12 : 16;
@@ -62,7 +66,7 @@ export default function SalesScreen({ navigation }) {
   };
 
   const loadSales = useCallback(async () => {
-    if (!workspace.activeBranchId) {
+    if (!workspace.currentWorkspaceId) {
       setSales([]);
       return;
     }
@@ -90,7 +94,7 @@ export default function SalesScreen({ navigation }) {
 
       try {
         const data = await api.get(
-          `/workspaces/${workspace.currentWorkspaceId}/branches/${workspace.activeBranchId}/transactions`,
+          transactionPath,
           {
             type: 'sale',
             take: 50,
@@ -98,7 +102,7 @@ export default function SalesScreen({ navigation }) {
         );
         const list = Array.isArray(data) ? data : [];
         setSales(list);
-        cacheTransactions(workspace.activeBranchId, 'sale', list).catch(
+        cacheTransactions(transactionScopeId, 'sale', list).catch(
           () => null,
         );
       } catch {
@@ -109,7 +113,7 @@ export default function SalesScreen({ navigation }) {
     } finally {
       setLoading(false);
     }
-  }, [workspace.currentWorkspaceId, workspace.activeBranchId, repo]);
+  }, [workspace.currentWorkspaceId, transactionPath, transactionScopeId, repo]);
 
   const sendWhatsAppReceipt = (phone, name, receiptUrl) => {
     const normalizedPhone = normalizeWhatsAppNumber(phone);
@@ -217,7 +221,7 @@ export default function SalesScreen({ navigation }) {
             Sales
           </Text>
           <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>
-            Sold goods history for this branch
+            Sold goods history for this scope
           </Text>
         </View>
         <AppButton

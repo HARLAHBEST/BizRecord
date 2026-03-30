@@ -35,6 +35,14 @@ export default function DashboardScreen({ navigation }) {
   const [inventoryItems, setInventoryItems] = React.useState([]);
   const [refreshTick, setRefreshTick] = React.useState(0);
   const [pendingInviteCount, setPendingInviteCount] = React.useState(0);
+  const transactionPath = workspace.activeBranchId
+    ? `/workspaces/${workspace.currentWorkspaceId}/branches/${workspace.activeBranchId}/transactions`
+    : `/workspaces/${workspace.currentWorkspaceId}/transactions`;
+  const transactionScopeId = workspace.activeBranchId || workspace.currentWorkspaceId;
+  const inventoryPath = workspace.activeBranchId
+    ? `/workspaces/${workspace.currentWorkspaceId}/branches/${workspace.activeBranchId}/inventory`
+    : `/workspaces/${workspace.currentWorkspaceId}/inventory`;
+  const inventoryScopeId = workspace.activeBranchId || workspace.currentWorkspaceId;
 
   useFocusEffect(
     React.useCallback(() => {
@@ -44,7 +52,7 @@ export default function DashboardScreen({ navigation }) {
 
   React.useEffect(() => {
     const loadActivity = async () => {
-      if (!workspace.activeBranchId) {
+      if (!workspace.currentWorkspaceId) {
         setRecentSales([]);
         setRecentExpenses([]);
         return;
@@ -55,8 +63,8 @@ export default function DashboardScreen({ navigation }) {
 
       try {
         const [sales, expenses] = await Promise.all([
-          api.get(`/workspaces/${workspace.currentWorkspaceId}/branches/${workspace.activeBranchId}/transactions`, { type: 'sale', take: 3 }),
-          api.get(`/workspaces/${workspace.currentWorkspaceId}/branches/${workspace.activeBranchId}/transactions`, { type: 'expense', take: 3 }),
+          api.get(transactionPath, { type: 'sale', take: 3 }),
+          api.get(transactionPath, { type: 'expense', take: 3 }),
         ]);
 
         const salesList = Array.isArray(sales) ? sales : [];
@@ -65,11 +73,11 @@ export default function DashboardScreen({ navigation }) {
         setRecentSales(salesList);
         setRecentExpenses(expensesList);
 
-        cacheTransactions(workspace.activeBranchId, 'sale', salesList).catch(() => null);
-        cacheTransactions(workspace.activeBranchId, 'expense', expensesList).catch(() => null);
+        cacheTransactions(transactionScopeId, 'sale', salesList).catch(() => null);
+        cacheTransactions(transactionScopeId, 'expense', expensesList).catch(() => null);
       } catch (err) {
-        const cachedSales = await getCachedTransactions(workspace.activeBranchId, 'sale');
-        const cachedExpenses = await getCachedTransactions(workspace.activeBranchId, 'expense');
+        const cachedSales = await getCachedTransactions(transactionScopeId, 'sale');
+        const cachedExpenses = await getCachedTransactions(transactionScopeId, 'expense');
         setRecentSales(cachedSales);
         setRecentExpenses(cachedExpenses);
         setActivityError('Offline mode: showing last known activity');
@@ -79,28 +87,28 @@ export default function DashboardScreen({ navigation }) {
     };
 
     loadActivity();
-  }, [workspace.activeBranchId, refreshTick]);
+  }, [workspace.currentWorkspaceId, transactionPath, transactionScopeId, refreshTick]);
 
   React.useEffect(() => {
     const loadInventory = async () => {
-      if (!workspace.activeBranchId) {
+      if (!workspace.currentWorkspaceId) {
         setInventoryItems([]);
         return;
       }
 
       try {
-        const data = await api.get(`/workspaces/${workspace.currentWorkspaceId}/branches/${workspace.activeBranchId}/inventory`);
+        const data = await api.get(inventoryPath);
         const list = Array.isArray(data) ? data : [];
         setInventoryItems(list);
-        cacheInventory(workspace.activeBranchId, list).catch(() => null);
+        cacheInventory(inventoryScopeId, list).catch(() => null);
       } catch (err) {
-        const cached = await getCachedInventory(workspace.activeBranchId);
+        const cached = await getCachedInventory(inventoryScopeId);
         setInventoryItems(Array.isArray(cached) ? cached : []);
       }
     };
 
     loadInventory();
-  }, [workspace.activeBranchId, refreshTick]);
+  }, [workspace.currentWorkspaceId, inventoryPath, inventoryScopeId, refreshTick]);
 
   React.useEffect(() => {
     const loadPendingInvites = async () => {

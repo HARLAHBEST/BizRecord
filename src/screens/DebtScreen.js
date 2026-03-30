@@ -65,6 +65,10 @@ export default function DebtScreen({ navigation }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const transactionPath = activeBranchId
+    ? `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`
+    : `/workspaces/${currentWorkspaceId}/transactions`;
+  const transactionScopeId = activeBranchId || currentWorkspaceId;
 
   const isCompact = width < 390;
   const contentWidth = Math.min(width - (isCompact ? 20 : 32), 820);
@@ -78,7 +82,7 @@ export default function DebtScreen({ navigation }) {
 
   useEffect(() => {
     const loadDebts = async () => {
-      if (!currentWorkspaceId || !activeBranchId) {
+      if (!currentWorkspaceId) {
         setDebts([]);
         return;
       }
@@ -128,12 +132,12 @@ export default function DebtScreen({ navigation }) {
 
         try {
           const data = await api.get(
-            `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`,
+            transactionPath,
             { type: 'debt' },
           );
           const list = Array.isArray(data) ? data : [];
           setDebts(dedupeDebts(list));
-          cacheDebts(activeBranchId, list).catch(() => null);
+          cacheDebts(transactionScopeId, list).catch(() => null);
         } catch {
           // Stay on local debt snapshot when offline.
         }
@@ -145,7 +149,7 @@ export default function DebtScreen({ navigation }) {
     };
 
     loadDebts();
-  }, [currentWorkspaceId, refreshTick, repo]);
+  }, [currentWorkspaceId, refreshTick, repo, transactionPath, transactionScopeId]);
 
   const normalizeWhatsAppNumber = (phone) => {
     const digits = String(phone || '').replace(/\D/g, '');
@@ -207,7 +211,7 @@ export default function DebtScreen({ navigation }) {
     );
     try {
       await api.put(
-        `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions/${transactionId}/status`,
+        `${transactionPath}/${transactionId}/status`,
         {
           status: 'completed',
         },
@@ -226,14 +230,14 @@ export default function DebtScreen({ navigation }) {
               server_id: String(existingDebt.id).startsWith('local_')
                 ? null
                 : String(existingDebt.id),
-              workspace_server_id: activeBranchId,
+              workspace_server_id: transactionScopeId,
               data: localData,
               sync_status:
                 existingDebt.sync_status === 'pending_create'
                   ? existingDebt.sync_status
                   : 'synced',
             },
-            currentWorkspaceId,
+            transactionScopeId,
           ),
           upsertLocalTransaction(
             {
@@ -241,14 +245,14 @@ export default function DebtScreen({ navigation }) {
               server_id: String(existingDebt.id).startsWith('local_')
                 ? null
                 : String(existingDebt.id),
-              workspace_server_id: activeBranchId,
+              workspace_server_id: transactionScopeId,
               data: localData,
               sync_status:
                 existingDebt.sync_status === 'pending_create'
                   ? existingDebt.sync_status
                   : 'synced',
             },
-            currentWorkspaceId,
+            transactionScopeId,
           ),
         ]);
       }

@@ -59,24 +59,34 @@ export default function RecordSaleScreen({ navigation, route }) {
   const [saleMode, setSaleMode] = useState('sale');
   const [dueInDays, setDueInDays] = useState('7');
   const [itemQuery, setItemQuery] = useState('');
+  const customerPath = activeBranchId
+    ? `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/customers`
+    : `/workspaces/${currentWorkspaceId}/customers`;
+  const inventoryPath = activeBranchId
+    ? `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/inventory`
+    : `/workspaces/${currentWorkspaceId}/inventory`;
+  const transactionPath = activeBranchId
+    ? `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`
+    : `/workspaces/${currentWorkspaceId}/transactions`;
+  const scopeId = activeBranchId || currentWorkspaceId;
 
   const customerId = selectedCustomer ? selectedCustomer.id : '';
 
   const loadCustomers = useCallback(async () => {
-    if (!currentWorkspaceId || !activeBranchId) {
+    if (!currentWorkspaceId) {
       setCustomers([]);
       return;
     }
     try {
-      const data = await api.get(`/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/customers`);
+      const data = await api.get(customerPath);
       const list = Array.isArray(data) ? data : [];
       setCustomers(list);
-      cacheCustomers(activeBranchId, list).catch(() => null);
+      cacheCustomers(scopeId, list).catch(() => null);
     } catch {
-      const cached = await getCachedCustomers(activeBranchId);
+      const cached = await getCachedCustomers(scopeId);
       setCustomers(Array.isArray(cached) ? cached : []);
     }
-  }, [currentWorkspaceId]);
+  }, [currentWorkspaceId, customerPath, scopeId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -86,25 +96,25 @@ export default function RecordSaleScreen({ navigation, route }) {
 
   React.useEffect(() => {
     const loadInventory = async () => {
-      if (!currentWorkspaceId || !activeBranchId) {
+      if (!currentWorkspaceId) {
         setInventoryItems([]);
         return;
       }
       setInventoryLoading(true);
       try {
-        const data = await api.get(`/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/inventory`);
+        const data = await api.get(inventoryPath);
         const list = Array.isArray(data) ? data : [];
         setInventoryItems(list);
-        cacheInventory(activeBranchId, list).catch(() => null);
+        cacheInventory(scopeId, list).catch(() => null);
       } catch {
-        const cached = await getCachedInventory(activeBranchId);
+        const cached = await getCachedInventory(scopeId);
         setInventoryItems(Array.isArray(cached) ? cached : []);
       } finally {
         setInventoryLoading(false);
       }
     };
     loadInventory();
-  }, [currentWorkspaceId]);
+  }, [currentWorkspaceId, inventoryPath, scopeId]);
 
   const selectedItem = useMemo(
     () => inventoryItems.find((item) => String(item.id) === String(selectedItemId)) || null,
@@ -159,7 +169,7 @@ export default function RecordSaleScreen({ navigation, route }) {
         }),
       );
 
-      const cached = await getCachedInventory(activeBranchId);
+      const cached = await getCachedInventory(scopeId);
       const matched = cached.find((item) => String(item.id) === String(itemId));
       if (!matched) return;
 
@@ -174,22 +184,22 @@ export default function RecordSaleScreen({ navigation, route }) {
         matched.local_id ||
         (String(itemId).startsWith('local_')
           ? String(itemId)
-          : await getLocalIdByServerId('inventory', itemId, activeBranchId)) ||
+          : await getLocalIdByServerId('inventory', itemId, scopeId)) ||
         String(itemId);
 
       await upsertLocalInventory(
         {
           local_id: localId,
           server_id: String(itemId).startsWith('local_') ? null : String(itemId),
-          workspace_server_id: activeBranchId,
+          workspace_server_id: scopeId,
           data: updatedItem,
           sync_status: matched.sync_status || 'synced',
           updated_at_local: Date.now(),
         },
-        currentWorkspaceId,
+        scopeId,
       );
     },
-    [currentWorkspaceId],
+    [currentWorkspaceId, scopeId],
   );
 
   const resolvePayload = useCallback(
@@ -225,21 +235,21 @@ export default function RecordSaleScreen({ navigation, route }) {
     const queueOffline = async () => {
       await queueAction({
         method: 'post',
-        path: `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`,
+        path: transactionPath,
         body: preparedPayload,
       });
     };
 
     try {
       const result = await api.post(
-        `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`,
+        transactionPath,
         preparedPayload,
       );
       await upsertLocalTransaction(
         {
           local_id: localId,
           server_id: result?.id ? String(result.id) : null,
-          workspace_server_id: activeBranchId,
+          workspace_server_id: scopeId,
           data: {
             ...localData,
             ...(result || {}),
@@ -249,7 +259,7 @@ export default function RecordSaleScreen({ navigation, route }) {
           sync_status: 'synced',
           updated_at_local: Date.now(),
         },
-        currentWorkspaceId,
+        scopeId,
       );
       if (result?.id) {
         await setIdMapping('transaction', localId, String(result.id));
@@ -286,7 +296,7 @@ export default function RecordSaleScreen({ navigation, route }) {
   };
 
   const handleSubmit = async () => {
-    if (!currentWorkspaceId || !activeBranchId) {
+    if (!currentWorkspaceId) {
       Alert.alert(
         'Workspace required',
         'Please select a workspace before recording a sale',

@@ -46,13 +46,17 @@ export default function ReportsScreen({ navigation }) {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(false);
   const contentWidth = Math.min(width - 24, 860);
+  const transactionPath = activeBranchId
+    ? `/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`
+    : `/workspaces/${currentWorkspaceId}/transactions`;
+  const transactionScopeId = activeBranchId || currentWorkspaceId;
 
   useFocusEffect(
     useCallback(() => {
       let mounted = true;
 
       const loadTransactions = async () => {
-        if (!currentWorkspaceId || !activeBranchId) {
+        if (!currentWorkspaceId) {
           if (mounted) setTransactions([]);
           return;
         }
@@ -96,17 +100,17 @@ export default function ReportsScreen({ navigation }) {
             setTransactions(mergedLocal);
           }
 
-          const list = await api.get(`/workspaces/${currentWorkspaceId}/branches/${activeBranchId}/transactions`, {
+          const list = await api.get(transactionPath, {
             skip: 0,
             take: 500,
           });
           if (mounted) {
             setTransactions(Array.isArray(list) ? list : []);
           }
-          cacheTransactions(activeBranchId, null, Array.isArray(list) ? list : []).catch(() => null);
+          cacheTransactions(transactionScopeId, null, Array.isArray(list) ? list : []).catch(() => null);
         } catch (err) {
           if (mounted) {
-            const cached = await getCachedTransactions(activeBranchId);
+            const cached = await getCachedTransactions(transactionScopeId);
             setTransactions(Array.isArray(cached) ? cached : []);
           }
         } finally {
@@ -120,7 +124,7 @@ export default function ReportsScreen({ navigation }) {
       return () => {
         mounted = false;
       };
-    }, [currentWorkspaceId, activeBranchId, repo]),
+    }, [currentWorkspaceId, transactionPath, transactionScopeId, repo]),
   );
 
   const analytics = useMemo(() => {

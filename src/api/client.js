@@ -105,11 +105,37 @@ const buildOfflineFallback = async (path, query) => {
     return list;
   }
 
+  const workspaceTransactionsMatch = path.match(
+    /^\/workspaces\/([^/]+)\/transactions$/,
+  );
+  if (workspaceTransactionsMatch) {
+    const workspaceId = workspaceTransactionsMatch[1];
+    const type = query?.type;
+    let list = await getCachedTransactions(workspaceId, type);
+
+    const skip = Number(query?.skip || 0);
+    const take = Number(query?.take || 0);
+    if (skip > 0) {
+      list = list.slice(skip);
+    }
+    if (take > 0) {
+      list = list.slice(0, take);
+    }
+    return list;
+  }
+
   const customersMatch = path.match(
     /^\/workspaces\/([^/]+)\/branches\/([^/]+)\/customers$/,
   );
   if (customersMatch) {
     return getCachedCustomers(customersMatch[2], query?.search);
+  }
+
+  const workspaceCustomersMatch = path.match(
+    /^\/workspaces\/([^/]+)\/customers$/,
+  );
+  if (workspaceCustomersMatch) {
+    return getCachedCustomers(workspaceCustomersMatch[1], query?.search);
   }
 
   return null;
