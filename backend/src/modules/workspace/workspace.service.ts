@@ -794,7 +794,7 @@ export class WorkspaceService {
       .createQueryBuilder('transaction')
       .select('transaction.branch_id', 'branchId')
       .addSelect(
-        "SUM(CASE WHEN transaction.type = 'sale' THEN transaction.total_amount ELSE 0 END)",
+        "SUM(CASE WHEN transaction.type = 'sale' THEN transaction.\"totalAmount\" ELSE 0 END)",
         'salesAmount',
       )
       .addSelect(
@@ -802,7 +802,7 @@ export class WorkspaceService {
         'salesCount',
       )
       .addSelect(
-        "SUM(CASE WHEN transaction.type = 'debt' AND transaction.status = 'pending' THEN transaction.total_amount ELSE 0 END)",
+        "SUM(CASE WHEN transaction.type = 'debt' AND transaction.status = 'pending' THEN transaction.\"totalAmount\" ELSE 0 END)",
         'pendingDebtAmount',
       )
       .where('transaction.workspace_id = :workspaceId', { workspaceId })
@@ -820,7 +820,7 @@ export class WorkspaceService {
       .addSelect('branch.id', 'branchId')
       .addSelect('branch.name', 'branchName')
       .addSelect(
-        "SUM(CASE WHEN transaction.type = 'sale' THEN transaction.total_amount ELSE 0 END)",
+        "SUM(CASE WHEN transaction.type = 'sale' THEN transaction.\"totalAmount\" ELSE 0 END)",
         'salesAmount',
       )
       .addSelect(
@@ -835,7 +835,7 @@ export class WorkspaceService {
       .addGroupBy('branch.id')
       .addGroupBy('branch.name')
       .orderBy(
-        "SUM(CASE WHEN transaction.type = 'sale' THEN transaction.total_amount ELSE 0 END)",
+        "SUM(CASE WHEN transaction.type = 'sale' THEN transaction.\"totalAmount\" ELSE 0 END)",
         'DESC',
       )
       .getRawMany();
