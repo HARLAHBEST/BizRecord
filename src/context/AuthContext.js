@@ -3,6 +3,10 @@ import { AppState, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, setAuthToken } from '../api/client';
 import * as Crypto from 'expo-crypto';
+import {
+  registerPushTokenWithBackend,
+  unregisterPushTokenWithBackend,
+} from '../services/pushNotifications';
 
 import * as biometric from '../services/biometric';
 
@@ -50,6 +54,8 @@ export const AuthProvider = ({ children }) => {
     setToken(newToken);
     setUser(userData);
     setRequiresReAuth(false);
+
+    registerPushTokenWithBackend(api).catch(() => null);
   };
 
   const tryOfflinePasswordAuth = async (email, password) => {
@@ -91,6 +97,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const clearAuth = async () => {
+    await unregisterPushTokenWithBackend(api).catch(() => null);
     try {
       await AsyncStorage.multiRemove([
         STORAGE_KEY,
@@ -195,6 +202,7 @@ export const AuthProvider = ({ children }) => {
           setAuthToken(storedToken);
           setToken(storedToken);
           setUser(storedUser);
+          registerPushTokenWithBackend(api).catch(() => null);
           // Any restored session must re-authenticate before accessing app data.
           setRequiresReAuth(true);
         }

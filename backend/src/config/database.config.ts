@@ -13,6 +13,7 @@ import { Transaction } from '../modules/transactions/entities/transaction.entity
 import { Subscription } from '../modules/billing/entities/subscription.entity';
 import { Payment } from '../modules/billing/entities/payment.entity';
 import { Customer } from '../modules/customer/customer.entity';
+import { UserPushToken } from '../modules/notifications/entities/user-push-token.entity';
 
 // SSL helpers – evaluated at module load for the CLI DataSource and on each
 // databaseConfig() call for the runtime connection.
@@ -45,6 +46,7 @@ export const databaseConfig = (): TypeOrmModuleOptions => {
       Subscription,
       Payment,
       Customer,
+      UserPushToken,
     ],
     synchronize: process.env.NODE_ENV !== 'production',
     migrations: [__dirname + '/../database/migrations/*{.ts,.js}'],
@@ -84,6 +86,7 @@ const entities = [
   Subscription,
   Payment,
   Customer,
+  UserPushToken,
 ];
 const migrations = [__dirname + '/../database/migrations/*{.ts,.js}'];
 const ssl = buildSslOption();

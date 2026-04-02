@@ -62,7 +62,9 @@
       "barStyle": "light-content"
     },
     "backgroundColor": "#ffffff",
-    "plugins": [],
+    "plugins": [
+      "expo-notifications"
+    ],
     "extra": {
       "eas": {
         "projectId": "b5fa460b-4c59-483e-9a97-9d4936e35f49"

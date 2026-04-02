@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { Workspace } from '../../workspace/entities/workspace.entity';
 import { WorkspaceMembership } from '../../workspace/entities/workspace-membership.entity';
+import { UserPushToken } from '../../notifications/entities/user-push-token.entity';
 
 @Entity('users')
 export class User {
@@ -67,6 +68,9 @@ export class User {
 
   @OneToMany(() => WorkspaceMembership, (membership) => membership.user)
   memberships: WorkspaceMembership[];
+
+  @OneToMany(() => UserPushToken, (pushToken) => pushToken.user)
+  pushTokens: UserPushToken[];
 
   @CreateDateColumn()
   createdAt: Date;
