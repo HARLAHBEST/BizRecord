@@ -13,6 +13,7 @@ import { BillingService } from '../billing/billing.service';
 import { WorkspaceInvite } from './entities/invite.entity';
 import { EmailQueueService } from '../notifications/email-queue.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplateService } from '../notifications/email-template.service';
 import { Transaction } from '../transactions/entities/transaction.entity';
 import { InventoryItem } from '../inventory/entities/inventory-item.entity';
 import { WorkspaceMembership } from './entities/workspace-membership.entity';
@@ -57,6 +58,7 @@ export class WorkspaceService {
     private billingService: BillingService,
     private readonly emailQueueService: EmailQueueService,
     private readonly emailService: EmailService,
+    private readonly emailTemplateService: EmailTemplateService,
     private readonly branchAccessService: BranchAccessService,
     private readonly auditLogService: AuditLogService,
   ) {}
@@ -1479,11 +1481,24 @@ export class WorkspaceService {
     let delivery: 'queued' | 'manual_code_required' = 'queued';
 
     if (emailReadiness.canSend) {
+      const html = this.emailTemplateService.workspaceInvite(
+        inviteCode,
+        workspace.name,
+        inviteRole,
+        expiresAt,
+        branch && branchRole
+          ? {
+              name: branch.name,
+              role: branchRole,
+            }
+          : undefined,
+      );
+
       this.emailQueueService.enqueue({
         to: normalizedEmail,
-        subject: `Invitation to join workspace '${workspace.name}'`,
-        text: `You have been invited to join workspace '${workspace.name}' as ${inviteRole}.${branch ? ` You will also be added to branch '${branch.name}' as ${branchRole}.` : ''} Your invite code is ${inviteCode}. This code expires in ${this.inviteExpiryDays} days. Sign in to BizRecord and enter the code to accept.`,
-        html: `<p>You have been invited to join workspace '<b>${workspace.name}</b>' as <b>${inviteRole}</b>.</p>${branch ? `<p>Once accepted, you will also be added to branch '<b>${branch.name}</b>' as <b>${branchRole}</b>.</p>` : ''}<p>Your invite code is <b>${inviteCode}</b>.</p><p>This code expires on <b>${expiresAt.toDateString()}</b>.</p><p>Sign in to BizRecord and enter the code to accept the invite.</p>`,
+        subject: `You're invited to ${workspace.name} on BizRecord`,
+        text: `You have been invited to join ${workspace.name} on BizRecord as ${inviteRole}.${branch ? ` You will also be added to branch ${branch.name} as ${branchRole}.` : ''} Your invite code is ${inviteCode}. This code expires in ${this.inviteExpiryDays} days. Sign in to BizRecord and enter this code to accept your invite.`,
+        html,
       });
     } else {
       delivery = 'manual_code_required';

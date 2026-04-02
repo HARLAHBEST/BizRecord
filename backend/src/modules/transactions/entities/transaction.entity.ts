@@ -39,6 +39,9 @@ export class Transaction {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   totalAmount: number;
 
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  discountAmount: number;
+
   @Column({ nullable: true })
   category: string;
 

@@ -40,6 +40,9 @@ const SettingsScreen = function({ navigation }) {
   const canManageWorkspace = !workspaceAccessBlocked && (userRole === 'owner' || userRole === 'manager');
   const normalizedPlan = user?.plan === 'pro' ? 'pro' : 'basic';
   const planLimit = normalizedPlan === 'pro' ? 3 : 1;
+  const ownedWorkspacesCount = (workspace.workspaces || []).filter(
+    (item) => String(item?.role || '').toLowerCase() === 'owner',
+  ).length;
   const trialDaysLeft = user?.trialEndsAt
     ? Math.max(0, Math.ceil((new Date(user.trialEndsAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
     : 0;
@@ -57,7 +60,7 @@ const SettingsScreen = function({ navigation }) {
       meta: {
         plan: normalizedPlan,
         limit: planLimit,
-        current: workspace.workspaces.length,
+        current: ownedWorkspacesCount,
         feature,
       },
     });
@@ -65,7 +68,7 @@ const SettingsScreen = function({ navigation }) {
   };
 
   const handleCreateWorkspace = () => {
-    if ((workspace.workspaces?.length || 0) >= planLimit) {
+    if (ownedWorkspacesCount >= planLimit) {
       openUpgradeModal('workspace.create');
       return;
     }
@@ -199,7 +202,7 @@ const SettingsScreen = function({ navigation }) {
             <View style={styles.settingText}>
               <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Current Plan</Text>
               <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
-                {normalizedPlan.toUpperCase()} • {workspace.workspaces?.length || 0}/{planLimit} workspaces
+                {normalizedPlan.toUpperCase()} • {ownedWorkspacesCount}/{planLimit} owned workspaces
                 {user?.trialStatus === 'active' ? ` • Trial: ${trialDaysLeft} day${trialDaysLeft === 1 ? '' : 's'} left` : ''}
               </Text>
             </View>
@@ -518,7 +521,7 @@ const SettingsScreen = function({ navigation }) {
         message={upgradePayload?.message}
         plan={upgradePayload?.meta?.plan || normalizedPlan}
         limit={upgradePayload?.meta?.limit || planLimit}
-        current={upgradePayload?.meta?.current || (workspace.workspaces?.length || 0)}
+        current={upgradePayload?.meta?.current || ownedWorkspacesCount}
       />
     </ScrollView>
   );

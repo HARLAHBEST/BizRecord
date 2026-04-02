@@ -54,6 +54,7 @@ export default function RecordSaleScreen({ navigation, route }) {
   const [quantity, setQuantity] = useState('');
   const [customers, setCustomers] = useState([]);
   const [notes, setNotes] = useState('');
+  const [discountAmount, setDiscountAmount] = useState('0');
   const [loading, setLoading] = useState(false);
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [saleMode, setSaleMode] = useState('sale');
@@ -145,6 +146,9 @@ export default function RecordSaleScreen({ navigation, route }) {
 
   const unitPrice = Number(selectedItem?.sellingPrice || 0);
   const quantityNumber = Number(quantity || 0);
+  const discountNumber = Number(discountAmount || 0);
+  const grossTotal = unitPrice * quantityNumber;
+  const netTotal = Math.max(0, grossTotal - Math.max(0, discountNumber));
   const dueDate =
     saleMode === 'debt' && dueInDays
       ? new Date(Date.now() + Number(dueInDays || 0) * 86400000).toISOString()
@@ -273,16 +277,19 @@ export default function RecordSaleScreen({ navigation, route }) {
     }
   };
 
-  const buildTransactionPayload = (item, soldQuantity) => {
+  const buildTransactionPayload = (item, soldQuantity, negotiatedDiscount = 0) => {
     const numericQuantity = Number(soldQuantity || 0);
     const itemPrice = Number(item?.sellingPrice || 0);
-    const total = numericQuantity * itemPrice;
+    const gross = numericQuantity * itemPrice;
+    const normalizedDiscount = Math.max(0, Number(negotiatedDiscount || 0));
+    const total = Math.max(0, gross - normalizedDiscount);
     return {
       type: saleMode === 'debt' ? 'debt' : 'sale',
       itemId: item?.id || null,
       quantity: numericQuantity,
-      unitPrice: itemPrice,
+      unitPrice: numericQuantity > 0 ? Number((total / numericQuantity).toFixed(2)) : 0,
       totalAmount: total,
+      discountAmount: normalizedDiscount,
       paymentMethod:
         PAYMENT_OPTIONS.find((option) => option.id === saleMode)?.paymentMethod ||
         'cash',
@@ -312,7 +319,7 @@ export default function RecordSaleScreen({ navigation, route }) {
           if (availableStock && Number(item.quantity || 0) > availableStock) {
             throw new Error(`Insufficient stock for ${item.name}. Available: ${availableStock}`);
           }
-          await postTransaction(buildTransactionPayload(item, item.quantity));
+          await postTransaction(buildTransactionPayload(item, item.quantity, 0));
           await applyLocalInventoryDelta(item.id, item.quantity);
         }
 
@@ -334,6 +341,19 @@ export default function RecordSaleScreen({ navigation, route }) {
         return;
       }
 
+      if (discountNumber < 0) {
+        Alert.alert('Validation Error', 'Discount cannot be negative');
+        return;
+      }
+
+      if (discountNumber > grossTotal) {
+        Alert.alert(
+          'Validation Error',
+          `Discount cannot exceed gross amount (${formatMoney(grossTotal)}).`,
+        );
+        return;
+      }
+
       const availableStock = Number(selectedItem.quantity || 0);
       if (quantityNumber > availableStock) {
         Alert.alert(
@@ -343,14 +363,14 @@ export default function RecordSaleScreen({ navigation, route }) {
         return;
       }
 
-      await postTransaction(buildTransactionPayload(selectedItem, quantityNumber));
+      await postTransaction(
+        buildTransactionPayload(selectedItem, quantityNumber, discountNumber),
+      );
       await applyLocalInventoryDelta(selectedItem.id, quantityNumber);
 
       Alert.alert(
         saleMode === 'debt' ? 'Debt sale recorded' : 'Sale recorded',
-        `${quantityNumber} x ${selectedItem.name} = ${formatMoney(
-          unitPrice * quantityNumber,
-        )}\nCustomer: ${selectedCustomerRecord?.name || 'Walk-in'}`,
+        `${quantityNumber} x ${selectedItem.name}\nGross: ${formatMoney(grossTotal)}\nDiscount: ${formatMoney(discountNumber)}\nFinal: ${formatMoney(netTotal)}\nCustomer: ${selectedCustomerRecord?.name || 'Walk-in'}`,
         [{ text: 'OK', onPress: () => navigation.goBack() }],
       );
     } catch (err) {
@@ -622,6 +642,27 @@ export default function RecordSaleScreen({ navigation, route }) {
               </View>
             </View>
 
+            <View style={{ marginTop: 12 }}>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 8 }}>
+                Discount amount (NGN)
+              </Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: theme.colors.card,
+                    color: theme.colors.textPrimary,
+                    borderColor: theme.colors.border,
+                  },
+                ]}
+                placeholder="0"
+                placeholderTextColor={theme.colors.textSecondary}
+                keyboardType="number-pad"
+                value={discountAmount}
+                onChangeText={setDiscountAmount}
+              />
+            </View>
+
             {selectedItem ? (
               <View style={styles.totalRow}>
                 <View>
@@ -633,9 +674,17 @@ export default function RecordSaleScreen({ navigation, route }) {
                   </Text>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={{ color: theme.colors.textSecondary }}>Total</Text>
+                  <Text style={{ color: theme.colors.textSecondary }}>Gross</Text>
+                  <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 14, marginTop: 4 }}>
+                    {formatMoney(grossTotal)}
+                  </Text>
+                  <Text style={{ color: theme.colors.textSecondary, marginTop: 6 }}>Discount</Text>
+                  <Text style={{ color: theme.colors.warning, fontWeight: '700', fontSize: 14, marginTop: 4 }}>
+                    {formatMoney(discountNumber)}
+                  </Text>
+                  <Text style={{ color: theme.colors.textSecondary, marginTop: 6 }}>Final total</Text>
                   <Text style={{ color: theme.colors.primary, fontWeight: '700', fontSize: 16, marginTop: 4 }}>
-                    {formatMoney(unitPrice * (quantityNumber || 0))}
+                    {formatMoney(netTotal)}
                   </Text>
                 </View>
               </View>

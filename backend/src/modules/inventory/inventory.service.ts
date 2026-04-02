@@ -8,6 +8,7 @@ import { Transaction } from '../transactions/entities/transaction.entity';
 import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
 import { UpdateInventoryItemDto } from './dto/update-inventory-item.dto';
 import { EmailQueueService } from '../notifications/email-queue.service';
+import { EmailTemplateService } from '../notifications/email-template.service';
 import { PushService } from '../notifications/push.service';
 import { Branch } from '../workspace/entities/branch.entity';
 import { BranchAccessService } from '../workspace/branch-access.service';
@@ -31,6 +32,7 @@ export class InventoryService {
     @InjectRepository(StockTransfer)
     private stockTransfersRepository: Repository<StockTransfer>,
     private readonly emailQueueService: EmailQueueService,
+    private readonly emailTemplateService: EmailTemplateService,
     private readonly pushService: PushService,
     private readonly branchAccessService: BranchAccessService,
     private readonly auditLogService: AuditLogService,
@@ -110,11 +112,22 @@ export class InventoryService {
 
     // Notification triggers: Email and Push
     // Email notification for item creation
+    const createHtml = this.emailTemplateService.inventoryAlert(
+      savedItem.name,
+      workspace.name,
+      'created',
+      {
+        SKU: savedItem.sku || '-',
+        Category: savedItem.category || '-',
+        'Opening Stock': `${Number(savedItem.quantity || 0)}`,
+      },
+    );
+
     this.emailQueueService.enqueue({
       to: user.email,
-      subject: 'Inventory Item Created',
-      text: `Item '${savedItem.name}' was created in workspace '${workspace.name}'.`,
-      html: `<p>Item '<b>${savedItem.name}</b>' was created in workspace '<b>${workspace.name}</b>'.</p>`,
+      subject: 'Inventory Item Created - BizRecord',
+      text: `Inventory item created: ${savedItem.name} in workspace ${workspace.name}. Current stock: ${Number(savedItem.quantity || 0)}.`,
+      html: createHtml,
     });
 
     // Push notification for item creation
@@ -209,11 +222,21 @@ export class InventoryService {
     // Notification triggers: Email and Push
     const user = updatedItem.createdBy;
     const workspace = updatedItem.workspace;
+    const updateHtml = this.emailTemplateService.genericNotification(
+      'Inventory Item Updated',
+      `Your item ${updatedItem.name} was successfully updated in ${workspace.name}.`,
+      `Latest quantity: <strong>${Number(updatedItem.quantity || 0)}</strong><br/>SKU: <strong>${updatedItem.sku || '-'}</strong><br/>Category: <strong>${updatedItem.category || '-'}</strong>`,
+      {
+        text: 'Open Inventory',
+        url: 'https://bizrecord.tech/app/inventory',
+      },
+    );
+
     this.emailQueueService.enqueue({
       to: user.email,
-      subject: 'Inventory Item Updated',
-      text: `Item '${updatedItem.name}' was updated in workspace '${workspace.name}'.`,
-      html: `<p>Item '<b>${updatedItem.name}</b>' was updated in workspace '<b>${workspace.name}</b>'.</p>`,
+      subject: 'Inventory Item Updated - BizRecord',
+      text: `Inventory item updated: ${updatedItem.name} in workspace ${workspace.name}.`,
+      html: updateHtml,
     });
     this.pushService.sendPush({
       to: user.id,
@@ -260,11 +283,21 @@ export class InventoryService {
     // Notification triggers: Email and Push
     const user = item.createdBy;
     const workspace = item.workspace;
+    const deleteHtml = this.emailTemplateService.genericNotification(
+      'Inventory Item Deleted',
+      `The item ${item.name} was removed from ${workspace.name}.`,
+      'This action preserves related transaction history while removing the product from active inventory lists.',
+      {
+        text: 'Review Inventory',
+        url: 'https://bizrecord.tech/app/inventory',
+      },
+    );
+
     this.emailQueueService.enqueue({
       to: user.email,
-      subject: 'Inventory Item Deleted',
-      text: `Item '${item.name}' was deleted from workspace '${workspace.name}'.`,
-      html: `<p>Item '<b>${item.name}</b>' was deleted from workspace '<b>${workspace.name}</b>'.</p>`,
+      subject: 'Inventory Item Deleted - BizRecord',
+      text: `Inventory item deleted: ${item.name} from workspace ${workspace.name}.`,
+      html: deleteHtml,
     });
     this.pushService.sendPush({
       to: user.id,

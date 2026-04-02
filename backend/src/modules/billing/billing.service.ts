@@ -13,6 +13,7 @@ import { Subscription } from './entities/subscription.entity';
 import { Payment } from './entities/payment.entity';
 import { InitiateCheckoutDto } from './dto/initiate-checkout.dto';
 import { EmailQueueService } from '../notifications/email-queue.service';
+import { EmailTemplateService } from '../notifications/email-template.service';
 import { PushService } from '../notifications/push.service';
 
 type PlanKey = 'basic' | 'pro';
@@ -41,6 +42,7 @@ export class BillingService {
     @InjectRepository(Payment)
     private paymentsRepository: Repository<Payment>,
     private readonly emailQueueService: EmailQueueService,
+    private readonly emailTemplateService: EmailTemplateService,
     private readonly pushService: PushService,
   ) {}
 
@@ -500,11 +502,19 @@ export class BillingService {
 
     // Notification triggers: Email and Push
     // Email notification for payment success
+    const amountText = `NGN ${Number(payment.amount || 0).toLocaleString()}`;
+    const html = this.emailTemplateService.paymentSuccess(
+      user.plan,
+      amountText,
+      payment.reference,
+      subscription.currentPeriodEndsAt || undefined,
+    );
+
     this.emailQueueService.enqueue({
       to: user.email,
-      subject: 'Payment Successful',
-      text: `Your payment for plan ${user.plan} was successful. Reference: ${payment.reference}`,
-      html: `<p>Your payment for plan <b>${user.plan}</b> was successful.<br/>Reference: <b>${payment.reference}</b></p>`,
+      subject: 'Payment Successful - BizRecord',
+      text: `Your payment was successful. Plan: ${user.plan}. Amount: ${amountText}. Reference: ${payment.reference}.`,
+      html,
     });
 
     // Push notification for payment success

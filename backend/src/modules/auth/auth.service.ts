@@ -15,6 +15,7 @@ import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { EmailQueueService } from '../notifications/email-queue.service';
+import { EmailTemplateService } from '../notifications/email-template.service';
 
 @Injectable()
 export class AuthService {
@@ -23,6 +24,7 @@ export class AuthService {
     private usersRepository: Repository<User>,
     private jwtService: JwtService,
     private emailQueueService: EmailQueueService,
+    private readonly emailTemplateService: EmailTemplateService,
   ) {}
 
   private generateSixDigitCode() {
@@ -32,22 +34,28 @@ export class AuthService {
   private async sendVerificationEmail(user: User) {
     if (!user.emailVerificationCode) return;
 
+    const html = this.emailTemplateService.emailVerification(
+      user.emailVerificationCode,
+    );
+
     this.emailQueueService.enqueue({
       to: user.email,
       subject: 'Verify your BizRecord account',
-      text: `Your verification code is ${user.emailVerificationCode}. It expires in 10 minutes.`,
-      html: `<p>Your verification code is <b>${user.emailVerificationCode}</b>.</p><p>It expires in 10 minutes.</p>`,
+      text: `Your BizRecord verification code is ${user.emailVerificationCode}. It expires in 10 minutes. If you did not request this, please ignore this email.`,
+      html,
     });
   }
 
   private async sendResetEmail(user: User) {
     if (!user.passwordResetCode) return;
 
+    const html = this.emailTemplateService.passwordReset(user.passwordResetCode);
+
     this.emailQueueService.enqueue({
       to: user.email,
       subject: 'BizRecord password reset code',
-      text: `Your password reset code is ${user.passwordResetCode}. It expires in 10 minutes.`,
-      html: `<p>Your password reset code is <b>${user.passwordResetCode}</b>.</p><p>It expires in 10 minutes.</p>`,
+      text: `Your BizRecord password reset code is ${user.passwordResetCode}. It expires in 10 minutes. If you did not request this, please secure your account immediately.`,
+      html,
     });
   }
 

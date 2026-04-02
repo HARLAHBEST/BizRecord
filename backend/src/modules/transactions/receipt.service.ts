@@ -41,65 +41,139 @@ export class ReceiptService {
       transaction.type === 'debt' ? 'Debt Sale Receipt' : 'Sales Receipt';
     const amountLabel =
       transaction.type === 'debt' ? 'Amount Due' : 'Amount Paid';
-    const amountPrefix = 'NGN ';
+    const discountAmount = Number(transaction.discountAmount || 0);
+    const amountPrefix = 'NGN';
+    const formatCurrency = (value: number) =>
+      `${amountPrefix} ${Number(value || 0).toLocaleString()}`;
+    const pageWidth = doc.page.width;
+    const contentWidth = pageWidth - 80;
+
+    doc.rect(0, 0, pageWidth, 110).fill('#0f172a');
+    doc
+      .fillColor('#ffffff')
+      .fontSize(22)
+      .text('BizRecord', 40, 32, { align: 'left' });
+    doc
+      .fontSize(10)
+      .fillColor('#cbd5e1')
+      .text('Professional Business Receipt', 40, 62, { align: 'left' });
+    doc
+      .fontSize(16)
+      .fillColor('#ffffff')
+      .text(transactionLabel, 40, 32, { align: 'right', width: contentWidth });
+    doc
+      .fontSize(10)
+      .fillColor('#cbd5e1')
+      .text(`Issued: ${transaction.createdAt.toLocaleString()}`, 40, 62, {
+        align: 'right',
+        width: contentWidth,
+      });
+
+    doc.y = 130;
 
     doc
-      .fontSize(22)
-      .text(workspaceName, { align: 'center' })
+      .fillColor('#111827')
+      .fontSize(14)
+      .text(workspaceName, 40, doc.y)
       .moveDown(0.2);
     doc
-      .fontSize(18)
-      .text(transactionLabel, { align: 'center' })
-      .moveDown(1);
-
-    doc.fontSize(11).fillColor('#4b5563');
-    doc.text(`Date: ${transaction.createdAt.toLocaleString()}`);
-    doc.text(`Receipt ID: ${transaction.id}`);
-    doc.text(`Recorded by: ${transaction.createdBy?.name || 'Team member'}`);
-    doc.text(`Payment method: ${transaction.paymentMethod || 'cash'}`);
-    doc.text(`Status: ${transaction.status || 'pending'}`);
+      .fontSize(10)
+      .fillColor('#6b7280')
+      .text(`Receipt ID: ${transaction.id}`)
+      .text(`Recorded by: ${transaction.createdBy?.name || 'Team member'}`)
+      .text(`Payment method: ${(transaction.paymentMethod || 'cash').toUpperCase()}`)
+      .text(`Status: ${(transaction.status || 'pending').toUpperCase()}`);
     if (transaction.dueDate) {
       doc.text(`Due date: ${transaction.dueDate.toLocaleDateString()}`);
     }
-    doc.moveDown();
 
-    doc.fontSize(13).fillColor('#111827').text('Customer Details', {
-      underline: true,
-    });
-    doc.fontSize(11).fillColor('#374151');
-    doc.text(`Customer: ${customerName}`);
-    doc.text(`Phone: ${transaction.phone || '-'}`);
-    doc.moveDown();
+    doc.moveDown(0.8);
 
-    doc.fontSize(13).fillColor('#111827').text('Goods Details', {
-      underline: true,
-    });
-    doc.fontSize(11).fillColor('#374151');
-    doc.text(`Item: ${itemName}`);
-    doc.text(`SKU: ${itemSku}`);
-    doc.text(`Category: ${itemCategory}`);
-    doc.text(`Location: ${itemLocation}`);
-    doc.text(`Quantity sold: ${Number(transaction.quantity || 0)}`);
-    doc.text(
-      `Unit price: ${amountPrefix}${Number(
-        transaction.unitPrice || 0,
-      ).toLocaleString()}`,
-    );
-    doc.text(
-      `${amountLabel}: ${amountPrefix}${Number(
-        transaction.totalAmount || 0,
-      ).toLocaleString()}`,
-    );
-    doc.text(`Remaining stock after sale: ${currentStock}`);
+    const sectionHeader = (label: string) => {
+      const y = doc.y;
+      doc
+        .rect(40, y, contentWidth, 22)
+        .fill('#f1f5f9');
+      doc
+        .fillColor('#0f172a')
+        .fontSize(11)
+        .text(label, 48, y + 6);
+      doc.y = y + 28;
+    };
+
+    sectionHeader('CUSTOMER DETAILS');
+    doc
+      .fillColor('#374151')
+      .fontSize(10)
+      .text(`Customer Name: ${customerName}`, 48)
+      .text(`Phone Number: ${transaction.phone || '-'}`, 48)
+      .moveDown(0.7);
+
+    sectionHeader('TRANSACTION DETAILS');
+    doc
+      .fillColor('#374151')
+      .fontSize(10)
+      .text(`Item: ${itemName}`, 48)
+      .text(`SKU: ${itemSku}`, 48)
+      .text(`Category: ${itemCategory}`, 48)
+      .text(`Location: ${itemLocation}`, 48)
+      .text(`Quantity: ${Number(transaction.quantity || 0)}`, 48)
+      .text(`Unit Price: ${formatCurrency(Number(transaction.unitPrice || 0))}`, 48)
+      .text(`Remaining Stock: ${currentStock}`, 48)
+      .moveDown(0.7);
+
+    const totalsY = doc.y;
+    doc.rect(40, totalsY, contentWidth, 62).fill('#eff6ff');
+    doc
+      .fillColor('#1e3a8a')
+      .fontSize(11)
+      .text('PAYMENT SUMMARY', 48, totalsY + 10)
+      .fillColor('#334155')
+      .fontSize(10)
+      .text(
+        `Gross Amount: ${formatCurrency(
+          Number(transaction.totalAmount || 0) + discountAmount,
+        )}`,
+        48,
+        totalsY + 28,
+      )
+      .text(`Discount: ${formatCurrency(discountAmount)}`, 48, totalsY + 42)
+      .fillColor('#111827')
+      .fontSize(12)
+      .text(
+        `${amountLabel}: ${formatCurrency(Number(transaction.totalAmount || 0))}`,
+        320,
+        totalsY + 34,
+      );
+    doc.y = totalsY + 74;
+
     if (transaction.notes) {
-      doc.text(`Notes: ${transaction.notes}`);
+      sectionHeader('NOTES');
+      doc.fillColor('#374151').fontSize(10).text(transaction.notes, 48);
+      doc.moveDown(0.5);
     }
-    doc.moveDown();
 
     doc
-      .fontSize(12)
-      .fillColor('#111827')
-      .text('Thank you for choosing BizRecord.', { align: 'center' });
+      .moveDown(1)
+      .strokeColor('#e5e7eb')
+      .lineWidth(1)
+      .moveTo(40, doc.y)
+      .lineTo(pageWidth - 40, doc.y)
+      .stroke();
+
+    doc
+      .fillColor('#0f172a')
+      .fontSize(10)
+      .text('Thank you for your business.', 40, doc.y + 10, {
+        align: 'center',
+        width: contentWidth,
+      })
+      .fillColor('#6b7280')
+      .fontSize(9)
+      .text('Generated securely by BizRecord', 40, doc.y + 26, {
+        align: 'center',
+        width: contentWidth,
+      });
     doc.end();
 
     await new Promise((resolve) => doc.on('end', resolve));

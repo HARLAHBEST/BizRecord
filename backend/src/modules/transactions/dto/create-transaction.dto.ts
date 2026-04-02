@@ -30,6 +30,10 @@ export class CreateTransactionDto {
   totalAmount?: number;
 
   @IsOptional()
+  @IsNumber()
+  discountAmount?: number;
+
+  @IsOptional()
   @IsString()
   category?: string;
 

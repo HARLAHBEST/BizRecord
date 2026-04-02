@@ -98,6 +98,7 @@ export class TransactionsService {
     let quantity = Number(createTransactionDto.quantity || 0);
     let unitPrice = Number(createTransactionDto.unitPrice || 0);
     let totalAmount = Number(createTransactionDto.totalAmount || 0);
+    let discountAmount = Number(createTransactionDto.discountAmount || 0);
     const isInventoryReducingTransaction =
       normalizedType === 'sale' || normalizedType === 'debt';
 
@@ -149,10 +150,30 @@ export class TransactionsService {
       unitPrice = Number(
         createTransactionDto.unitPrice || item.sellingPrice || 0,
       );
+      const grossAmount = unitPrice * quantity;
+
+      if (discountAmount < 0) {
+        throw new BadRequestException('discountAmount cannot be negative');
+      }
+      if (discountAmount > grossAmount) {
+        throw new BadRequestException(
+          `discountAmount cannot exceed gross amount (${grossAmount})`,
+        );
+      }
+
       totalAmount =
-        Number(createTransactionDto.totalAmount || 0) > 0
-          ? Number(createTransactionDto.totalAmount)
-          : unitPrice * quantity;
+        discountAmount > 0
+          ? grossAmount - discountAmount
+          : Number(createTransactionDto.totalAmount || 0) > 0
+            ? Number(createTransactionDto.totalAmount)
+            : grossAmount;
+
+      if (totalAmount < 0) {
+        throw new BadRequestException('totalAmount cannot be negative');
+      }
+
+      // Store final effective per-unit selling price after discount distribution.
+      unitPrice = quantity > 0 ? Number((totalAmount / quantity).toFixed(2)) : 0;
 
       item.quantity = Number((currentStock - quantity).toFixed(2));
       await this.itemsRepository.save(item);
@@ -165,6 +186,7 @@ export class TransactionsService {
       quantity,
       unitPrice,
       totalAmount,
+      discountAmount,
       category: createTransactionDto.category,
       paymentMethod: createTransactionDto.paymentMethod,
       status: createTransactionDto.status || 'pending',
