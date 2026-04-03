@@ -55,6 +55,42 @@ const dedupeDebts = (items = []) => {
   });
 };
 
+const isPendingSyncStatus = (status) => {
+  const value = String(status || '').toLowerCase();
+  return value === 'pending_create' || value === 'pending_update' || value === 'failed' || value === 'conflict';
+};
+
+const mergeByIdentity = (primary = [], secondary = []) => {
+  const map = new Map();
+  [...(Array.isArray(primary) ? primary : []), ...(Array.isArray(secondary) ? secondary : [])].forEach((item) => {
+    const key = String(item?.id ?? item?.server_id ?? item?.local_id ?? '');
+    if (!key || key === 'undefined' || key === 'null') return;
+
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, item);
+      return;
+    }
+
+    const existingPending = isPendingSyncStatus(existing?.sync_status);
+    const incomingPending = isPendingSyncStatus(item?.sync_status);
+    if (incomingPending && !existingPending) {
+      map.set(key, item);
+      return;
+    }
+    if (existingPending && !incomingPending) {
+      return;
+    }
+
+    const existingTime = new Date(existing?.updatedAt || existing?.updated_at || existing?.createdAt || 0).getTime();
+    const incomingTime = new Date(item?.updatedAt || item?.updated_at || item?.createdAt || 0).getTime();
+    if (incomingTime >= existingTime) {
+      map.set(key, item);
+    }
+  });
+  return dedupeDebts(Array.from(map.values()));
+};
+
 export default function DebtScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
@@ -128,18 +164,17 @@ export default function DebtScreen({ navigation }) {
           }
         }
 
-        setDebts(dedupeDebts(localList));
-
         try {
           const data = await api.get(
             transactionPath,
             { type: 'debt' },
           );
           const list = Array.isArray(data) ? data : [];
-          setDebts(dedupeDebts(list));
+          setDebts(mergeByIdentity(list, localList));
           cacheDebts(transactionScopeId, list).catch(() => null);
         } catch {
           // Stay on local debt snapshot when offline.
+          setDebts(dedupeDebts(localList));
         }
       } catch {
         setError('Unable to load debts');

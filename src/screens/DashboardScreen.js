@@ -11,6 +11,49 @@ import { api } from '../api/client';
 import { MaterialIcons } from '@expo/vector-icons';
 import UpgradeModal from '../components/UpgradeModal';
 
+const isPendingSyncStatus = (status) => {
+  const value = String(status || '').toLowerCase();
+  return value === 'pending_create' || value === 'pending_update' || value === 'failed' || value === 'conflict';
+};
+
+const mergeByIdentity = (primary = [], secondary = []) => {
+  const rows = [...(Array.isArray(primary) ? primary : []), ...(Array.isArray(secondary) ? secondary : [])];
+  const map = new Map();
+
+  rows.forEach((item) => {
+    const key = String(item?.id ?? item?.server_id ?? item?.local_id ?? '');
+    if (!key || key === 'undefined' || key === 'null') return;
+
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, item);
+      return;
+    }
+
+    const existingPending = isPendingSyncStatus(existing?.sync_status);
+    const incomingPending = isPendingSyncStatus(item?.sync_status);
+    if (incomingPending && !existingPending) {
+      map.set(key, item);
+      return;
+    }
+    if (existingPending && !incomingPending) {
+      return;
+    }
+
+    const existingTime = new Date(existing?.updatedAt || existing?.updated_at || existing?.createdAt || 0).getTime();
+    const incomingTime = new Date(item?.updatedAt || item?.updated_at || item?.createdAt || 0).getTime();
+    if (incomingTime >= existingTime) {
+      map.set(key, item);
+    }
+  });
+
+  return Array.from(map.values()).sort((left, right) => {
+    const leftTime = new Date(left?.createdAt || left?.updatedAt || left?.updated_at || 0).getTime();
+    const rightTime = new Date(right?.createdAt || right?.updatedAt || right?.updated_at || 0).getTime();
+    return rightTime - leftTime;
+  });
+};
+
 export default function DashboardScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
@@ -70,11 +113,18 @@ export default function DashboardScreen({ navigation }) {
         const salesList = Array.isArray(sales) ? sales : [];
         const expensesList = Array.isArray(expenses) ? expenses : [];
 
-        setRecentSales(salesList);
-        setRecentExpenses(expensesList);
-
         cacheTransactions(transactionScopeId, 'sale', salesList).catch(() => null);
         cacheTransactions(transactionScopeId, 'expense', expensesList).catch(() => null);
+
+          // Merge cached offline items with API data to avoid losing offline-created items
+          const cachedSales = await getCachedTransactions(transactionScopeId, 'sale');
+          const cachedExpenses = await getCachedTransactions(transactionScopeId, 'expense');
+          
+          const mergedSales = mergeByIdentity(salesList, cachedSales);
+          const mergedExpenses = mergeByIdentity(expensesList, cachedExpenses);
+          
+          setRecentSales(mergedSales);
+          setRecentExpenses(mergedExpenses);
       } catch (err) {
         const cachedSales = await getCachedTransactions(transactionScopeId, 'sale');
         const cachedExpenses = await getCachedTransactions(transactionScopeId, 'expense');
@@ -99,8 +149,12 @@ export default function DashboardScreen({ navigation }) {
       try {
         const data = await api.get(inventoryPath);
         const list = Array.isArray(data) ? data : [];
-        setInventoryItems(list);
         cacheInventory(inventoryScopeId, list).catch(() => null);
+          
+          // Merge cached offline items with API data
+          const cached = await getCachedInventory(inventoryScopeId);
+          const merged = mergeByIdentity(list, cached);
+          setInventoryItems(merged);
       } catch (err) {
         const cached = await getCachedInventory(inventoryScopeId);
         setInventoryItems(Array.isArray(cached) ? cached : []);

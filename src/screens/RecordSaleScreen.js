@@ -29,6 +29,42 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useCustomerSelect } from '../context/CustomerSelectContext';
 import { useFocusEffect } from '@react-navigation/native';
 
+const isPendingSyncStatus = (status) => {
+  const value = String(status || '').toLowerCase();
+  return value === 'pending_create' || value === 'pending_update' || value === 'failed' || value === 'conflict';
+};
+
+const mergeByIdentity = (primary = [], secondary = []) => {
+  const map = new Map();
+  [...(Array.isArray(primary) ? primary : []), ...(Array.isArray(secondary) ? secondary : [])].forEach((item) => {
+    const key = String(item?.id ?? item?.server_id ?? item?.local_id ?? '');
+    if (!key || key === 'undefined' || key === 'null') return;
+
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, item);
+      return;
+    }
+
+    const existingPending = isPendingSyncStatus(existing?.sync_status);
+    const incomingPending = isPendingSyncStatus(item?.sync_status);
+    if (incomingPending && !existingPending) {
+      map.set(key, item);
+      return;
+    }
+    if (existingPending && !incomingPending) {
+      return;
+    }
+
+    const existingTime = new Date(existing?.updatedAt || existing?.updated_at || existing?.createdAt || 0).getTime();
+    const incomingTime = new Date(item?.updatedAt || item?.updated_at || item?.createdAt || 0).getTime();
+    if (incomingTime >= existingTime) {
+      map.set(key, item);
+    }
+  });
+  return Array.from(map.values());
+};
+
 const PAYMENT_OPTIONS = [
   { id: 'sale', label: 'Cash sale', paymentMethod: 'cash' },
   { id: 'debt', label: 'Mark as debt', paymentMethod: 'credit' },
@@ -79,9 +115,10 @@ export default function RecordSaleScreen({ navigation, route }) {
       return;
     }
     try {
+      const cachedCustomers = await getCachedCustomers(scopeId);
       const data = await api.get(customerPath);
       const list = Array.isArray(data) ? data : [];
-      setCustomers(list);
+      setCustomers(mergeByIdentity(list, cachedCustomers));
       cacheCustomers(scopeId, list).catch(() => null);
     } catch {
       const cached = await getCachedCustomers(scopeId);
@@ -103,9 +140,10 @@ export default function RecordSaleScreen({ navigation, route }) {
       }
       setInventoryLoading(true);
       try {
+        const cached = await getCachedInventory(scopeId);
         const data = await api.get(inventoryPath);
         const list = Array.isArray(data) ? data : [];
-        setInventoryItems(list);
+        setInventoryItems(mergeByIdentity(list, cached));
         cacheInventory(scopeId, list).catch(() => null);
       } catch {
         const cached = await getCachedInventory(scopeId);

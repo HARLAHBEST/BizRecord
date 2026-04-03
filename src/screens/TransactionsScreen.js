@@ -7,6 +7,46 @@ import { api } from '../api/client';
 import { cacheTransactions, getCachedTransactions } from '../storage/offlineStore';
 import { MaterialIcons } from '@expo/vector-icons';
 
+const isPendingSyncStatus = (status) => {
+  const value = String(status || '').toLowerCase();
+  return value === 'pending_create' || value === 'pending_update' || value === 'failed' || value === 'conflict';
+};
+
+const mergeByIdentity = (primary = [], secondary = []) => {
+  const map = new Map();
+  [...(Array.isArray(primary) ? primary : []), ...(Array.isArray(secondary) ? secondary : [])].forEach((item) => {
+    const key = String(item?.id ?? item?.server_id ?? item?.local_id ?? '');
+    if (!key || key === 'undefined' || key === 'null') return;
+
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, item);
+      return;
+    }
+
+    const existingPending = isPendingSyncStatus(existing?.sync_status);
+    const incomingPending = isPendingSyncStatus(item?.sync_status);
+    if (incomingPending && !existingPending) {
+      map.set(key, item);
+      return;
+    }
+    if (existingPending && !incomingPending) {
+      return;
+    }
+
+    const existingTime = new Date(existing?.updatedAt || existing?.updated_at || existing?.createdAt || 0).getTime();
+    const incomingTime = new Date(item?.updatedAt || item?.updated_at || item?.createdAt || 0).getTime();
+    if (incomingTime >= existingTime) {
+      map.set(key, item);
+    }
+  });
+  return Array.from(map.values()).sort((left, right) => {
+    const leftTime = new Date(left?.createdAt || left?.updatedAt || left?.updated_at || 0).getTime();
+    const rightTime = new Date(right?.createdAt || right?.updatedAt || right?.updated_at || 0).getTime();
+    return rightTime - leftTime;
+  });
+};
+
 export default function TransactionsScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
@@ -49,7 +89,8 @@ export default function TransactionsScreen({ navigation }) {
 
         const data = await api.get(transactionPath, { take: 50 });
         const list = Array.isArray(data) ? data : [];
-        setTransactions(list);
+        const cached = await getCachedTransactions(transactionScopeId);
+        setTransactions(mergeByIdentity(list, cached));
         cacheTransactions(transactionScopeId, null, list).catch(() => null);
       } catch (err) {
         const cached = await getCachedTransactions(transactionScopeId);
