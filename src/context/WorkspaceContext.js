@@ -539,6 +539,79 @@ export const WorkspaceProvider = function({ children }) {
         });
         return;
       }
+
+      if (action.method === 'put' && route.targetId) {
+        const targetId = String(route.targetId);
+        let updateEntityType = entityType;
+        let updateActionPrefix = actionPrefix;
+        let localId = targetId.startsWith('local_')
+          ? targetId
+          : (await offlineStore.getLocalIdByServerId(entityType, targetId, workspaceRef)) || targetId;
+        let existing = await offlineStore.getLocalRow(updateEntityType, localId);
+
+        if (!existing && entityType === 'transaction') {
+          updateEntityType = 'debt';
+          updateActionPrefix = 'debt';
+          localId = targetId.startsWith('local_')
+            ? targetId
+            : (await offlineStore.getLocalIdByServerId('debt', targetId, workspaceRef)) || targetId;
+          existing = await offlineStore.getLocalRow(updateEntityType, localId);
+        }
+
+        const existingData = existing?.data ? JSON.parse(existing.data) : {};
+        const serverId = existing?.server_id || (targetId.startsWith('local_') ? null : targetId);
+        const mergedBody = stampLocalEntityDates({
+          ...existingData,
+          ...(action.body || {}),
+          type: action.body?.type || existingData?.type || (updateEntityType === 'debt' ? 'debt' : undefined),
+        }, now);
+        const mergedData = {
+          ...existingData,
+          ...mergedBody,
+          id: serverId || localId,
+          local_id: localId,
+          server_id: serverId,
+        };
+        const upsert = updateEntityType === 'debt'
+          ? offlineStore.upsertLocalDebt
+          : offlineStore.upsertLocalTransaction;
+
+        if ((existing?.sync_status || '') === 'pending_create' || !serverId) {
+          await upsert({
+            local_id: localId,
+            server_id: serverId,
+            workspace_server_id: workspaceRef,
+            data: mergedData,
+            sync_status: 'pending_create',
+            updated_at_local: now,
+          }, workspaceRef);
+          await offlineStore.executeSql(
+            'UPDATE sync_outbox SET payload = ?, updated_at = ?, last_error = NULL WHERE action_id = ?',
+            [JSON.stringify(mergedBody), now, localId],
+          );
+          return;
+        }
+
+        await upsert({
+          local_id: localId,
+          server_id: serverId,
+          workspace_server_id: workspaceRef,
+          data: mergedData,
+          sync_status: 'pending_update',
+          updated_at_local: now,
+        }, workspaceRef);
+        await offlineStore.addSyncOutboxAction({
+          action_id: generateLocalId(`${updateActionPrefix}_update`),
+          action_type: `update_${updateActionPrefix}`,
+          entity_type: updateEntityType,
+          entity_local_id: localId,
+          workspace_ref: workspaceRef,
+          payload: action.body || {},
+          created_at: now,
+          updated_at: now,
+        });
+        return;
+      }
     }
 
     if (route.domain === 'customers') {

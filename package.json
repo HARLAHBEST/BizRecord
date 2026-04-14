@@ -19,7 +19,9 @@
     "build:appstore": "eas build --platform ios --profile production",
     "build:preview": "eas build --platform all --profile preview",
     "submit:playstore": "eas submit --platform android --latest",
-    "submit:appstore": "eas submit --platform ios --latest"
+    "submit:appstore": "eas submit --platform ios --latest",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

@@ -428,7 +428,7 @@ Before submitting to stores, verify:
 - [ ] No hardcoded URLs or API keys
 - [ ] Permissions properly requested
 - [ ] Privacy policy written and linked
-- [ ] Version number bumped (in app.json)
+- [ ] Confirm app version labels are correct (`expo.version` / `runtimeVersion` in app.json)
 
 ---
 
@@ -483,7 +483,7 @@ npm run submit:appstore
 3. **Test on TestFlight First** - Catch issues before App Store review
 4. **Monitor Build Sizes** - AAB should be < 100MB for store approval
 5. **Keep Signing Credentials Safe** - EAS manages these securely
-6. **Version Your Builds** - Update version in app.json for each release
+6. **Version Your Builds** - Build numbers auto-increment via EAS (`eas.json`); only update `expo.version` / `runtimeVersion` when needed
 7. **Save Release Notes** - Document changes for each store submission
 
 ---

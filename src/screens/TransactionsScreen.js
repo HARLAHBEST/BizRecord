@@ -157,7 +157,7 @@ export default function TransactionsScreen({ navigation }) {
               subtitle="Sales, expenses and debts will appear here"
               style={{ marginTop: 32 }}
               ctaLabel="Record a transaction"
-              onCtaPress={() => navigation.navigate('RecordSaleScreen')}
+              onCtaPress={() => navigation.navigate('RecordSale')}
               accessibilityLabel="No transactions. Record a transaction."
             />
           )}
@@ -189,4 +189,3 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
-

@@ -60,6 +60,21 @@ export async function getSkuDetails(productIds = []) {
   return Array.isArray(response) ? response : response?.products || [];
 }
 
+export async function getProductDetails(productIds = [], productType = 'subs') {
+  await ensureConnection();
+
+  if (!productIds.length) {
+    return [];
+  }
+
+  const response = await fetchProducts({
+    skus: productIds,
+    type: productType,
+  });
+
+  return Array.isArray(response) ? response : response?.products || [];
+}
+
 export async function purchaseSubscription(productId) {
   await ensureConnection();
 
@@ -78,17 +93,35 @@ export async function purchaseSubscription(productId) {
   return purchase;
 }
 
+export async function purchaseProduct(productId) {
+  await ensureConnection();
+
+  const result = await requestPurchase({
+    request: {
+      google: { skus: [productId] },
+    },
+    type: 'in-app',
+  });
+
+  const purchase = unwrapPurchase(result);
+  if (!purchase) {
+    throw new Error('Google Play did not return a purchase record.');
+  }
+
+  return purchase;
+}
+
 export async function restorePurchases() {
   await ensureConnection();
   const purchases = await getAvailablePurchases();
   return Array.isArray(purchases) ? purchases : [];
 }
 
-export async function acknowledgePurchase(purchase) {
+export async function acknowledgePurchase(purchase, options = {}) {
   await ensureConnection();
   return finishTransaction({
     purchase,
-    isConsumable: false,
+    isConsumable: options?.isConsumable === true,
   });
 }
 
@@ -106,8 +139,10 @@ export async function disconnect() {
 export default {
   acknowledgePurchase,
   disconnect,
+  getProductDetails,
   getSkuDetails,
   isAvailable,
+  purchaseProduct,
   purchaseSubscription,
   restorePurchases,
 };

@@ -15,6 +15,7 @@ import { useWorkspace } from '../context/WorkspaceContext';
 import { api } from '../api/client';
 import {
   cacheDebts,
+  getServerId,
   upsertLocalDebt,
   upsertLocalTransaction,
 } from '../storage/offlineStore';
@@ -276,50 +277,74 @@ export default function DebtScreen({ navigation }) {
 
   const markAsPaid = async (transactionId) => {
     const existingDebt = debts.find(
-      (item) => String(item.id) === String(transactionId),
+      (item) =>
+        String(item.id) === String(transactionId) ||
+        String(item.local_id) === String(transactionId) ||
+        String(item.server_id) === String(transactionId),
     );
+    const localId =
+      existingDebt?.local_id ||
+      (String(existingDebt?.id || '').startsWith('local_')
+        ? String(existingDebt.id)
+        : null);
+    const serverId =
+      existingDebt?.server_id ||
+      (localId ? await getServerId('debt', localId) : null) ||
+      (String(transactionId).startsWith('local_') ? null : String(transactionId));
+    const targetId = serverId || localId || String(transactionId);
     try {
-      await api.put(
-        `${transactionPath}/${transactionId}/status`,
-        {
+      if (serverId) {
+        await api.put(`${transactionPath}/${serverId}/status`, {
           status: 'completed',
-        },
-      );
+        });
+      } else if (repo?.queueAction) {
+        await repo.queueAction({
+          method: 'put',
+          path: `${transactionPath}/${targetId}/status`,
+          body: {
+            status: 'completed',
+            type: 'debt',
+          },
+        });
+      } else {
+        throw new Error('Debt has not synced yet. Try again when online.');
+      }
+
       if (existingDebt) {
         const localData = {
           ...existingDebt,
           status: 'completed',
-          id: existingDebt.id,
-          local_id: existingDebt.local_id || existingDebt.id,
+          id: serverId || localId || existingDebt.id,
+          local_id: localId || existingDebt.id,
+          server_id: serverId || existingDebt.server_id || null,
+          updatedAt: new Date().toISOString(),
         };
         await Promise.all([
           upsertLocalDebt(
             {
-              local_id: existingDebt.local_id || existingDebt.id,
-              server_id: String(existingDebt.id).startsWith('local_')
-                ? null
-                : String(existingDebt.id),
+              local_id: localId || existingDebt.id,
+              server_id: serverId || null,
               workspace_server_id: transactionScopeId,
               data: localData,
-              sync_status:
-                existingDebt.sync_status === 'pending_create'
-                  ? existingDebt.sync_status
-                  : 'synced',
+              sync_status: existingDebt.sync_status === 'pending_create'
+                ? 'pending_create'
+                : serverId
+                  ? 'synced'
+                  : 'pending_update',
             },
             transactionScopeId,
           ),
           upsertLocalTransaction(
             {
-              local_id: existingDebt.local_id || existingDebt.id,
-              server_id: String(existingDebt.id).startsWith('local_')
-                ? null
-                : String(existingDebt.id),
+              local_id: localId || existingDebt.id,
+              server_id: serverId || null,
               workspace_server_id: transactionScopeId,
               data: localData,
-              sync_status:
-                existingDebt.sync_status === 'pending_create'
-                  ? existingDebt.sync_status
-                  : 'synced',
+              sync_status: existingDebt.sync_status === 'pending_create'
+                ? 'pending_create'
+                : serverId
+                  ? 'synced'
+                  : 'pending_update',
             },
             transactionScopeId,
           ),
@@ -327,8 +352,18 @@ export default function DebtScreen({ navigation }) {
       }
       setDebts((prev) =>
         prev.map((item) =>
-          String(item.id) === String(transactionId)
-            ? { ...item, status: 'completed' }
+          String(item.id) === String(transactionId) ||
+          String(item.local_id) === String(transactionId) ||
+          String(item.server_id) === String(transactionId)
+            ? {
+                ...item,
+                status: 'completed',
+                sync_status: item.sync_status === 'pending_create'
+                  ? 'pending_create'
+                  : serverId
+                    ? item.sync_status
+                    : 'pending_update',
+              }
             : item,
         ),
       );
@@ -588,4 +623,3 @@ const styles = StyleSheet.create({
     minWidth: 108,
   },
 });
-

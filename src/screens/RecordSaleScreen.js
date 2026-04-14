@@ -367,6 +367,78 @@ export default function RecordSaleScreen({ navigation, route }) {
     };
   };
 
+  const addToLocalCart = () => {
+    if (!selectedItem || !quantity) {
+      Alert.alert('Validation Error', 'Please select an item and quantity');
+      return;
+    }
+
+    if (!quantityNumber || quantityNumber <= 0) {
+      Alert.alert('Validation Error', 'Quantity must be greater than zero');
+      return;
+    }
+
+    if (discountNumber < 0) {
+      Alert.alert('Validation Error', 'Discount cannot be negative');
+      return;
+    }
+
+    if (discountNumber > grossTotal) {
+      Alert.alert(
+        'Validation Error',
+        `Discount cannot exceed gross amount (${formatMoney(grossTotal)}).`,
+      );
+      return;
+    }
+
+    const availableStock = Number(selectedItem.quantity || 0);
+    const existingCartQuantity = localCart
+      .filter((item) => String(item.id) === String(selectedItem.id))
+      .reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    const requestedQuantity = existingCartQuantity + quantityNumber;
+
+    if (requestedQuantity > availableStock) {
+      Alert.alert(
+        'Insufficient stock',
+        `Only ${availableStock} unit(s) are currently available.`,
+      );
+      return;
+    }
+
+    setLocalCart((prev) => {
+      const existingIndex = prev.findIndex(
+        (item) => String(item.id) === String(selectedItem.id),
+      );
+
+      if (existingIndex === -1) {
+        return [
+          ...prev,
+          {
+            ...selectedItem,
+            quantity: quantityNumber,
+            discountAmount: discountNumber,
+          },
+        ];
+      }
+
+      return prev.map((item, index) =>
+        index === existingIndex
+          ? {
+              ...item,
+              quantity: Number(item.quantity || 0) + quantityNumber,
+              discountAmount:
+                Number(item.discountAmount || 0) + discountNumber,
+            }
+          : item,
+      );
+    });
+
+    setSelectedItemId('');
+    setQuantity('');
+    setDiscountAmount('0');
+    setItemQuery('');
+  };
+
   const handleSubmit = async () => {
     if (!currentWorkspaceId) {
       Alert.alert(
@@ -990,4 +1062,3 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 });
-

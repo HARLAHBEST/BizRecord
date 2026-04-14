@@ -224,6 +224,101 @@ export class BillingService {
     return fallback;
   }
 
+  private inferPurchaseKindFromProductId(
+    productId: string,
+  ):
+    | 'plan'
+    | 'addon_workspace_slot'
+    | 'addon_staff_seat'
+    | 'addon_whatsapp_bundle_100' {
+    if (/addon[_\-]?workspace/i.test(productId)) {
+      return 'addon_workspace_slot';
+    }
+    if (/addon[_\-]?staff/i.test(productId)) {
+      return 'addon_staff_seat';
+    }
+    if (/addon[_\-]?whatsapp/i.test(productId)) {
+      return 'addon_whatsapp_bundle_100';
+    }
+    return 'plan';
+  }
+
+  private async applyVerifiedAddonPurchase(params: {
+    userId: string;
+    productId: string;
+    purchaseToken: string;
+    purchaseKind:
+      | 'addon_workspace_slot'
+      | 'addon_staff_seat'
+      | 'addon_whatsapp_bundle_100';
+    billingCycle: BillingCycle;
+    verifiedData: Record<string, any>;
+  }) {
+    const user = await this.usersRepository.findOne({ where: { id: params.userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const subscription = await this.findOrCreateSubscription(user);
+    if (subscription.status === 'trialing') {
+      throw new BadRequestException(
+        'Add-ons cannot be purchased during active trial',
+      );
+    }
+    if (subscription.plan !== 'pro') {
+      throw new BadRequestException('Add-ons are available only for Pro subscription');
+    }
+
+    if (params.purchaseKind === 'addon_workspace_slot') {
+      subscription.addonWorkspaceSlots = (subscription.addonWorkspaceSlots || 0) + 1;
+    } else if (params.purchaseKind === 'addon_staff_seat') {
+      subscription.addonStaffSeats = (subscription.addonStaffSeats || 0) + 1;
+    } else if (params.purchaseKind === 'addon_whatsapp_bundle_100') {
+      subscription.addonWhatsappBundles =
+        (subscription.addonWhatsappBundles || 0) + 1;
+    }
+
+    subscription.billingCycle = params.billingCycle;
+    subscription.lastPaymentReference = params.purchaseToken;
+    subscription.status = 'active';
+    subscription.metadata = {
+      ...(subscription.metadata || {}),
+      google: {
+        ...((subscription.metadata as any)?.google || {}),
+        lastAddonPurchase: {
+          productId: params.productId,
+          purchaseToken: params.purchaseToken,
+          purchaseKind: params.purchaseKind,
+          billingCycle: params.billingCycle,
+          verifiedAt: new Date().toISOString(),
+          verifiedData: params.verifiedData,
+        },
+      },
+    };
+    await this.subscriptionsRepository.save(subscription);
+
+    const payment = this.paymentsRepository.create({
+      userId: user.id,
+      reference: params.purchaseToken,
+      status: 'success',
+      amount: 0,
+      currency: 'NGN',
+      purchaseType: 'addon_purchase',
+      billingCycle: params.billingCycle,
+      targetPlan: subscription.plan,
+      addonWorkspaceSlots: params.purchaseKind === 'addon_workspace_slot' ? 1 : 0,
+      addonStaffSeats: params.purchaseKind === 'addon_staff_seat' ? 1 : 0,
+      addonWhatsappBundles:
+        params.purchaseKind === 'addon_whatsapp_bundle_100' ? 1 : 0,
+      metadata: {
+        google: params.verifiedData,
+        purchaseKind: params.purchaseKind,
+        productId: params.productId,
+      },
+    });
+    await this.paymentsRepository.save(payment);
+  }
+
   private mapGoogleNotificationStatus(notificationType?: number) {
     if ([2, 4].includes(Number(notificationType))) {
       return 'active' as const;
@@ -472,6 +567,12 @@ export class BillingService {
       productId: string;
       purchaseToken: string;
       purchaseType?: 'subscription' | 'product';
+      purchaseKind?:
+        | 'plan'
+        | 'addon_workspace_slot'
+        | 'addon_staff_seat'
+        | 'addon_whatsapp_bundle_100';
+      billingCycle?: 'monthly' | 'yearly';
       workspaceId?: string;
     },
   ) {
@@ -480,12 +581,16 @@ export class BillingService {
     const token = dto.purchaseToken;
     const type =
       dto.purchaseType === 'subscription' ? 'subscription' : 'product';
+    const purchaseKind =
+      dto.purchaseKind || this.inferPurchaseKindFromProductId(productId);
+    const requestedBillingCycle =
+      dto.billingCycle || this.inferBillingCycleFromProductId(productId, 'monthly');
 
-    if (type === 'subscription') {
+    if (type === 'subscription' || purchaseKind !== 'plan') {
       const workspaceId = dto.workspaceId;
       if (!workspaceId) {
         throw new BadRequestException(
-          'workspaceId is required for subscription purchases',
+          'workspaceId is required for workspace-scoped purchases',
         );
       }
       const requester = await this.usersRepository.findOne({
@@ -513,13 +618,24 @@ export class BillingService {
           productId,
           token,
         );
-        await this.persistVerifiedGoogleSubscription(
-          userId,
-          productId,
-          token,
-          verifiedData,
-          { sendNotifications: true },
-        );
+        if (purchaseKind === 'plan') {
+          await this.persistVerifiedGoogleSubscription(
+            userId,
+            productId,
+            token,
+            verifiedData,
+            { sendNotifications: true },
+          );
+        } else {
+          await this.applyVerifiedAddonPurchase({
+            userId,
+            productId,
+            purchaseToken: token,
+            purchaseKind,
+            billingCycle: requestedBillingCycle,
+            verifiedData,
+          });
+        }
         return { verified: true, data: verifiedData };
       }
 
@@ -528,24 +644,35 @@ export class BillingService {
         productId,
         token,
       );
-      try {
-        const user = await this.usersRepository.findOne({ where: { id: userId } });
-        if (user) {
-          const payment = this.paymentsRepository.create({
-            userId: user.id,
-            reference: token,
-            status: 'success',
-            amount: 0,
-            currency: 'NGN',
-            purchaseType: 'one_time',
-            billingCycle: 'monthly',
-            targetPlan: 'basic',
-            metadata: { google: productData },
-          });
-          await this.paymentsRepository.save(payment);
+      if (purchaseKind === 'plan') {
+        try {
+          const user = await this.usersRepository.findOne({ where: { id: userId } });
+          if (user) {
+            const payment = this.paymentsRepository.create({
+              userId: user.id,
+              reference: token,
+              status: 'success',
+              amount: 0,
+              currency: 'NGN',
+              purchaseType: 'one_time',
+              billingCycle: 'monthly',
+              targetPlan: 'basic',
+              metadata: { google: productData },
+            });
+            await this.paymentsRepository.save(payment);
+          }
+        } catch {
+          // ignore non-fatal persistence errors for one-time Google products
         }
-      } catch {
-        // ignore non-fatal persistence errors for one-time Google products
+      } else {
+        await this.applyVerifiedAddonPurchase({
+          userId,
+          productId,
+          purchaseToken: token,
+          purchaseKind,
+          billingCycle: requestedBillingCycle,
+          verifiedData: productData,
+        });
       }
 
       return { verified: true, data: productData };
