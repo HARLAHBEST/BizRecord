@@ -6,6 +6,7 @@ import {
   Post,
   Body,
   Headers,
+  Param,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { BillingService } from './billing.service';
@@ -33,6 +34,12 @@ export class BillingController {
   @Get('usage')
   async getUsage(@Request() req) {
     return this.billingService.getUsage(req.user.sub);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('workspaces/:workspaceId/context')
+  async getWorkspaceContext(@Request() req, @Param('workspaceId') workspaceId: string) {
+    return this.billingService.getWorkspaceBillingContextForUser(req.user.sub, workspaceId);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -66,6 +73,12 @@ export class BillingController {
   @Post('verify/google')
   async verifyGooglePurchase(@Request() req, @Body() dto: VerifyGooglePurchaseDto) {
     return this.billingService.verifyGooglePurchase(req.user.sub, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('workspaces/:workspaceId/remind-owner')
+  async remindWorkspaceOwner(@Request() req, @Param('workspaceId') workspaceId: string) {
+    return this.billingService.remindWorkspaceOwner(req.user.sub, workspaceId);
   }
 
   // Google Play RTDN (Pub/Sub push) endpoint — Google will POST notifications here.

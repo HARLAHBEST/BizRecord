@@ -70,10 +70,6 @@ export class AuthService {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const trialStartAt = new Date();
-    const trialEndsAt = new Date(
-      trialStartAt.getTime() + 14 * 24 * 60 * 60 * 1000,
-    );
 
     const user = this.usersRepository.create({
       email,
@@ -81,10 +77,10 @@ export class AuthService {
       name,
       phone,
       role: 'owner',
-      plan: 'pro',
-      trialStartAt,
-      trialEndsAt,
-      trialStatus: 'active',
+      plan: 'basic',
+      trialStartAt: null,
+      trialEndsAt: null,
+      trialStatus: 'expired',
       emailVerified: false,
       emailVerificationCode: this.generateSixDigitCode(),
       emailVerificationExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
@@ -117,29 +113,13 @@ export class AuthService {
       );
     }
 
-    // If trial expired, mark as expired but allow login
-    if (
-      user.trialStatus === 'active' &&
-      user.trialEndsAt &&
-      user.trialEndsAt.getTime() <= Date.now()
-    ) {
-      user.trialStatus = 'expired';
-      await this.usersRepository.save(user);
-    }
-
-    // If trial expired, allow login but return upgradeRequired status
-    const trialExpired = user.trialStatus === 'expired';
-
     const payload = { sub: user.id, email: user.email };
     const token = this.jwtService.sign(payload);
 
     const { password: _, ...userWithoutPassword } = user;
     return {
       access_token: token,
-      user: {
-        ...userWithoutPassword,
-        upgradeRequired: trialExpired,
-      },
+      user: userWithoutPassword,
     };
   }
 

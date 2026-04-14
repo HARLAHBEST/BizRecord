@@ -15,6 +15,7 @@ import { BranchAccessService } from '../workspace/branch-access.service';
 import { StockTransfer } from './entities/stock-transfer.entity';
 import { CreateStockTransferDto } from './dto/create-stock-transfer.dto';
 import { AuditLogService } from '../workspace/audit-log.service';
+import { BillingService } from '../billing/billing.service';
 
 @Injectable()
 export class InventoryService {
@@ -36,6 +37,7 @@ export class InventoryService {
     private readonly pushService: PushService,
     private readonly branchAccessService: BranchAccessService,
     private readonly auditLogService: AuditLogService,
+    private readonly billingService: BillingService,
   ) {}
 
   private async assertInventoryScope(
@@ -80,6 +82,8 @@ export class InventoryService {
     branchId: string | null,
     userId: string,
   ) {
+    await this.billingService.assertWorkspaceActive(workspaceId, 'inventory.create');
+
     const { branch, user, workspace } = await this.assertInventoryScope(
       workspaceId,
       branchId,
@@ -200,6 +204,8 @@ export class InventoryService {
     updateItemDto: UpdateInventoryItemDto,
     userId: string,
   ) {
+    await this.billingService.assertWorkspaceActive(workspaceId, 'inventory.update');
+
     await this.assertInventoryScope(
       workspaceId,
       branchId,
@@ -255,6 +261,8 @@ export class InventoryService {
     itemId: string,
     userId: string,
   ) {
+    await this.billingService.assertWorkspaceActive(workspaceId, 'inventory.delete');
+
     await this.assertInventoryScope(
       workspaceId,
       branchId,
@@ -344,6 +352,8 @@ export class InventoryService {
     userId: string,
     dto: CreateStockTransferDto,
   ) {
+    await this.billingService.assertWorkspaceActive(workspaceId, 'inventory.transfer');
+
     await this.branchAccessService.assertWorkspaceOwnerLike(workspaceId, userId);
 
     if (dto.sourceBranchId === dto.destinationBranchId) {

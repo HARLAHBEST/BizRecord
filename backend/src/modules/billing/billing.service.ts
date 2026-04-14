@@ -26,6 +26,31 @@ type Addons = {
   whatsappBundles: number;
 };
 
+type PlanLimits = {
+  workspaceLimit: number;
+  staffSeatLimit: number;
+  whatsappMonthlyQuota: number;
+};
+
+type WorkspaceBillingContext = {
+  workspaceId: string;
+  ownerId: string;
+  plan: PlanKey;
+  billingCycle: BillingCycle;
+  status: string;
+  isActive: boolean;
+  currentPeriodEndsAt: Date | null;
+  trial: {
+    isTrialing: boolean;
+    trialEndsAt: Date | null;
+    addonsAllowed: boolean;
+  };
+  limits: PlanLimits;
+  usage: {
+    whatsappMessagesUsedThisMonth: number;
+  };
+};
+
 const PLAN_PRICES_NGN: Record<PlanKey, number> = {
   basic: 2500,
   pro: 7000,
@@ -67,7 +92,7 @@ export class BillingService {
     return Math.round(monthlyAmount);
   }
 
-  private computeLimits(plan: PlanKey, addOns: Addons) {
+  private computeLimits(plan: PlanKey, addOns: Addons): PlanLimits {
     if (plan === 'basic') {
       return {
         workspaceLimit: 1,
@@ -113,18 +138,18 @@ export class BillingService {
     const subscription = await this.subscriptionsRepository.findOne({
       where: { userId },
     });
-    if (!subscription) {
-      return { whatsappMessagesUsedThisMonth: 0 };
-    }
+
+    const plan: PlanKey = (subscription?.plan as PlanKey) === 'pro' ? 'pro' : 'basic';
+    const limits = this.computeLimits(plan, {
+      workspaceSlots: subscription?.addonWorkspaceSlots || 0,
+      staffSeats: subscription?.addonStaffSeats || 0,
+      whatsappBundles: subscription?.addonWhatsappBundles || 0,
+    });
 
     return {
       whatsappMessagesUsedThisMonth:
-        subscription.whatsappMessagesUsedThisMonth || 0,
-      limits: this.computeLimits(subscription.plan as PlanKey, {
-        workspaceSlots: subscription.addonWorkspaceSlots || 0,
-        staffSeats: subscription.addonStaffSeats || 0,
-        whatsappBundles: subscription.addonWhatsappBundles || 0,
-      }),
+        subscription?.whatsappMessagesUsedThisMonth || 0,
+      limits,
     };
   }
 
@@ -134,18 +159,14 @@ export class BillingService {
     });
 
     if (!subscription) {
+      const plan: PlanKey = (user.plan as PlanKey) === 'pro' ? 'pro' : 'basic';
       subscription = this.subscriptionsRepository.create({
         userId: user.id,
-        plan: user.plan === 'pro' ? 'pro' : 'basic',
-        status:
-          user.trialStatus === 'active'
-            ? 'trialing'
-            : user.trialStatus === 'expired'
-              ? 'expired'
-              : 'active',
-        trialEndsAt: user.trialEndsAt || null,
-        currentPeriodStartAt: user.trialStartAt || null,
-        currentPeriodEndsAt: user.trialEndsAt || null,
+        plan,
+        status: 'expired',
+        trialEndsAt: null,
+        currentPeriodStartAt: null,
+        currentPeriodEndsAt: null,
         addonWorkspaceSlots: 0,
         addonStaffSeats: 0,
         addonWhatsappBundles: 0,
@@ -241,6 +262,133 @@ export class BillingService {
       return 'addon_whatsapp_bundle_100';
     }
     return 'plan';
+  }
+
+  private toPlanKey(plan?: string | null): PlanKey {
+    return plan === 'pro' ? 'pro' : 'basic';
+  }
+
+  private toBillingCycle(cycle?: string | null): BillingCycle {
+    return cycle === 'yearly' ? 'yearly' : 'monthly';
+  }
+
+  async getWorkspaceBillingContext(workspaceId: string): Promise<WorkspaceBillingContext> {
+    const workspace = await this.workspacesRepository.findOne({
+      where: { id: workspaceId },
+      relations: ['createdBy'],
+    });
+
+    if (!workspace) {
+      throw new NotFoundException('Workspace not found');
+    }
+
+    const owner = workspace.createdBy;
+    if (!owner) {
+      throw new NotFoundException('Workspace owner not found');
+    }
+
+    const subscription = await this.subscriptionsRepository.findOne({
+      where: { userId: owner.id },
+    });
+
+    const plan = this.toPlanKey(subscription?.plan || owner.plan);
+    const billingCycle = this.toBillingCycle(subscription?.billingCycle || 'monthly');
+    const status = subscription?.status || 'inactive';
+    const isActive = status === 'active' || status === 'trialing';
+
+    const limits = this.computeLimits(plan, {
+      workspaceSlots: subscription?.addonWorkspaceSlots || 0,
+      staffSeats: subscription?.addonStaffSeats || 0,
+      whatsappBundles: subscription?.addonWhatsappBundles || 0,
+    });
+
+    const trialEndsAt =
+      subscription?.status === 'trialing'
+        ? subscription.currentPeriodEndsAt || subscription.trialEndsAt || null
+        : null;
+
+    const whatsappMessagesUsedThisMonth =
+      subscription?.whatsappMessagesUsedThisMonth || 0;
+
+    return {
+      workspaceId,
+      ownerId: owner.id,
+      plan,
+      billingCycle,
+      status,
+      isActive,
+      currentPeriodEndsAt: subscription?.currentPeriodEndsAt || null,
+      trial: {
+        isTrialing: subscription?.status === 'trialing',
+        trialEndsAt,
+        addonsAllowed: subscription?.status !== 'trialing',
+      },
+      limits,
+      usage: {
+        whatsappMessagesUsedThisMonth,
+      },
+    };
+  }
+
+  async getWorkspaceBillingContextForUser(
+    userId: string,
+    workspaceId: string,
+  ): Promise<WorkspaceBillingContext> {
+    const membership = await this.workspaceMembershipsRepository.findOne({
+      where: { workspaceId, userId, isActive: true },
+    });
+
+    if (!membership) {
+      throw new ForbiddenException('You do not belong to this workspace');
+    }
+
+    return this.getWorkspaceBillingContext(workspaceId);
+  }
+
+  async assertWorkspaceActive(
+    workspaceId: string,
+    feature?: string,
+  ): Promise<WorkspaceBillingContext> {
+    const ctx = await this.getWorkspaceBillingContext(workspaceId);
+
+    if (!ctx.isActive) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: 'SUBSCRIPTION_INACTIVE',
+        message:
+          'This workspace subscription is inactive or expired. Renew to continue using this feature.',
+        meta: {
+          workspaceId,
+          plan: ctx.plan,
+          status: ctx.status,
+          feature: feature || null,
+        },
+      } as any);
+    }
+
+    return ctx;
+  }
+
+  async assertWorkspaceProFeature(
+    workspaceId: string,
+    feature: string,
+  ): Promise<WorkspaceBillingContext> {
+    const ctx = await this.assertWorkspaceActive(workspaceId, feature);
+
+    if (ctx.plan !== 'pro') {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: 'PRO_PLAN_REQUIRED',
+        message: 'This feature is available on the Pro plan only.',
+        meta: {
+          workspaceId,
+          plan: ctx.plan,
+          feature,
+        },
+      } as any);
+    }
+
+    return ctx;
   }
 
   private async applyVerifiedAddonPurchase(params: {
@@ -679,6 +827,46 @@ export class BillingService {
     } catch (err: any) {
       return { verified: false, error: err?.message || err };
     }
+  }
+
+  async remindWorkspaceOwner(requesterId: string, workspaceId: string) {
+    const workspace = await this.workspacesRepository.findOne({
+      where: { id: workspaceId },
+      relations: ['createdBy'],
+    });
+
+    if (!workspace || !workspace.createdBy) {
+      throw new NotFoundException('Workspace not found');
+    }
+
+    const membership = await this.workspaceMembershipsRepository.findOne({
+      where: { workspaceId, userId: requesterId, isActive: true },
+      relations: ['user'],
+    });
+
+    if (!membership) {
+      throw new ForbiddenException('You do not belong to this workspace');
+    }
+
+    const owner = workspace.createdBy;
+    const requester = membership.user;
+    const ctx = await this.getWorkspaceBillingContext(workspaceId);
+
+    const html = this.emailTemplateService.genericNotification(
+      'Subscription renewal requested',
+      `${requester.name || requester.email} requested that you renew the BizRecord subscription for workspace "${workspace.name}".`,
+      `Current status: <strong>${ctx.status}</strong><br/>Plan: <strong>${ctx.plan.toUpperCase()}</strong>`,
+      undefined,
+    );
+
+    this.emailQueueService.enqueue({
+      to: owner.email,
+      subject: 'BizRecord workspace subscription renewal requested',
+      text: `${requester.name || requester.email} requested that you renew the subscription for workspace "${workspace.name}". Current status: ${ctx.status}.`,
+      html,
+    });
+
+    return { sent: true };
   }
 
   async handleGoogleWebhook(

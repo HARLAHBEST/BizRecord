@@ -264,11 +264,16 @@ export class WorkspaceService {
       (m) => !m.workspace.parentWorkspaceId,
     ).length;
 
-    if (subscription && subscription.status === 'expired') {
+    const isActiveSubscription =
+      subscription &&
+      (subscription.status === 'active' || subscription.status === 'trialing');
+
+    if (!isActiveSubscription) {
       throw new ForbiddenException({
         statusCode: 403,
         code: 'SUBSCRIPTION_REQUIRED',
-        message: 'Your trial has ended. Please upgrade to a paid plan to continue.',
+        message:
+          'An active subscription is required to create a workspace. Purchase or renew a plan in Billing.',
         meta: {
           plan: normalizedPlan,
           feature: 'workspace.create',
