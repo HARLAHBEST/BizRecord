@@ -94,7 +94,6 @@ export default function WorkspaceSetupScreen({ navigation }) {
 
     setLoading(true);
     try {
-      let online = true;
       try {
         const created = await api.post('/workspaces', {
           name: trimmedName,
@@ -115,15 +114,39 @@ export default function WorkspaceSetupScreen({ navigation }) {
         if (isModal) navigation.goBack();
         return;
       } catch (err) {
-        online = false;
-        if (err?.data?.code === 'PLAN_LIMIT_REACHED') {
-          openUpgradeModal(err.data);
-          setLoading(false);
+        // Check for business logic errors that should NOT create locally
+        const status = err?.response?.status || err?.data?.statusCode;
+        const errorCode = err?.data?.code;
+        const isBusinessError = status === 403 || status === 400;
+        
+        if (isBusinessError) {
+          // Don't create locally for business logic errors
+          if (errorCode === 'SUBSCRIPTION_REQUIRED') {
+            Alert.alert(
+              'Subscription Required',
+              'You need an active subscription to create a workspace. Please select and purchase a plan.',
+              [{ text: 'OK', onPress: () => openUpgradeModal() }]
+            );
+            return;
+          }
+          if (errorCode === 'PLAN_LIMIT_REACHED') {
+            openUpgradeModal(err.data);
+            return;
+          }
+          // Generic business error
+          Alert.alert('Unable to create workspace', err?.message || 'Please check your input and try again.');
           return;
         }
-      }
+        
+        // For true network errors only (no response or timeout), create locally
+        const isNetworkError = !err?.response && (/network|offline|timeout|fetch/i.test(String(err?.message || '')));
+        if (!isNetworkError) {
+          // Not a network error and not a business error - show generic error
+          Alert.alert('Unable to create workspace', err?.message || 'An unexpected error occurred.');
+          return;
+        }
 
-      if (!online) {
+        // Create locally for network errors
         const localId = `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const localWorkspace = {
           local_id: localId,

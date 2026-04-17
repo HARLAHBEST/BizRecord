@@ -156,33 +156,45 @@ export default function SubscriptionScreen({ navigation }) {
   };
 
   const refreshBilling = async () => {
-    if (!currentWorkspace?.id) {
-      throw new Error('Select a workspace to manage billing.');
-    }
-
-    const workspaceId = currentWorkspace.id;
-    const [plansResp, workspaceCtx] = await Promise.all([
-      api.get('/billing/plans'),
-      api.get(`/billing/workspaces/${workspaceId}/context`),
-    ]);
-    const normalizedPlans = normalizePlansResponse(plansResp);
-    setOnlineRequired(false);
-    setPlans(normalizedPlans);
-    setSubscription(workspaceCtx);
-    setWorkspaceBilling(workspaceCtx);
-    setUsage({
-      whatsappMessagesUsedThisMonth:
-        workspaceCtx?.usage?.whatsappMessagesUsedThisMonth ?? 0,
-      limits: workspaceCtx?.limits || {},
-    });
-    setSelectedPlan(workspaceCtx?.plan || 'pro');
-    setBillingCycle(workspaceCtx?.billingCycle || 'monthly');
+    // If no current workspace, fetch user-level subscription and global plans
+    let workspaceId = currentWorkspace?.id;
+    
     try {
-      await offlineStore.cacheBillingContext(workspaceId, workspaceCtx);
-    } catch {
-      // ignore cache errors
+      const [plansResp, subRes] = await Promise.all([
+        api.get('/billing/plans'),
+        workspaceId 
+          ? api.get(`/billing/workspaces/${workspaceId}/context`)
+          : api.get('/billing/subscription'), // Get user-level subscription if no workspace
+      ]);
+      const normalizedPlans = normalizePlansResponse(plansResp);
+      setOnlineRequired(false);
+      setPlans(normalizedPlans);
+      
+      // For workspace context, use the fetched workspace billing
+      // For user context, use subscription directly
+      const billingCtx = workspaceId ? subRes : (subRes ? { plan: subRes.plan, billingCycle: subRes.billingCycle || 'monthly', ...subRes } : {});
+      
+      setSubscription(billingCtx);
+      setWorkspaceBilling(billingCtx);
+      setUsage({
+        whatsappMessagesUsedThisMonth:
+          billingCtx?.usage?.whatsappMessagesUsedThisMonth ?? 0,
+        limits: billingCtx?.limits || {},
+      });
+      setSelectedPlan(billingCtx?.plan || 'pro');
+      setBillingCycle(billingCtx?.billingCycle || 'monthly');
+      
+      if (workspaceId) {
+        try {
+          await offlineStore.cacheBillingContext(workspaceId, billingCtx);
+        } catch {
+          // ignore cache errors
+        }
+      }
+      await loadPlayProducts();
+    } catch (err) {
+      throw err;
     }
-    await loadPlayProducts();
   };
 
   const retryBillingLoad = async () => {

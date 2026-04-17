@@ -535,8 +535,25 @@ export class BillingService {
       productId,
       subscription.billingCycle || 'monthly',
     );
-    subscription.status =
-      this.mapGoogleNotificationStatus(options?.notificationType) || 'active';
+    
+    // Google Play is the source of truth for trial information
+    // If product has freeTrialPeriod, user is on trial
+    const hasFreeTrialPeriod = !!verifiedData?.freeTrialPeriod;
+    const isPro = subscription.plan === 'pro';
+    
+    if (hasFreeTrialPeriod && isPro) {
+      // Pro plan with trial: set status to trialing and calculate trial end date
+      // Google Play's freeTrialPeriod is in ISO 8601 duration format (e.g., "P14D")
+      // We set trial to end 14 days from now (or from the trial end if available)
+      subscription.status = 'trialing';
+      subscription.trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+    } else {
+      // Basic plan or no trial: set status to active
+      subscription.status =
+        this.mapGoogleNotificationStatus(options?.notificationType) || 'active';
+      subscription.trialEndsAt = null;
+    }
+    
     subscription.currentPeriodStartAt =
       subscription.currentPeriodStartAt || new Date();
     subscription.currentPeriodEndsAt = verifiedData?.expiryTimeMillis
@@ -767,13 +784,14 @@ export class BillingService {
           token,
         );
         if (purchaseKind === 'plan') {
-          await this.persistVerifiedGoogleSubscription(
+          const subscription = await this.persistVerifiedGoogleSubscription(
             userId,
             productId,
             token,
             verifiedData,
             { sendNotifications: true },
           );
+          return { verified: true, data: verifiedData, subscription };
         } else {
           await this.applyVerifiedAddonPurchase({
             userId,
