@@ -897,7 +897,19 @@ export class BillingService {
     const decoded = dataB64
       ? Buffer.from(dataB64, 'base64').toString('utf8')
       : JSON.stringify(payload);
-    const parsed = JSON.parse(decoded);
+    
+    let parsed;
+    try {
+      parsed = JSON.parse(decoded);
+    } catch (err) {
+      console.error(
+        `Failed to parse webhook JSON: ${err.message}`,
+        decoded,
+      );
+      throw new BadRequestException(
+        'Invalid webhook payload: malformed JSON',
+      );
+    }
 
     if (parsed?.testNotification) {
       return { received: true, authenticated, parsed };
