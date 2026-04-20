@@ -109,16 +109,18 @@ export default function SubscriptionScreen({ navigation }) {
   const [processing, setProcessing] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState('pro');
   const [billingCycle, setBillingCycle] = useState('monthly');
-  const [addons, setAddons] = useState({
-    workspaceSlots: 0,
-    staffSeats: 0,
-    whatsappBundles: 0,
+  const [selectedAddons, setSelectedAddons] = useState({
+    workspaceSlot: false,
+    staffSeat: false,
+    whatsappBundle: false,
   });
   const [lastReference, setLastReference] = useState(null);
   const [onlineRequired, setOnlineRequired] = useState(false);
+  const [showAddonModal, setShowAddonModal] = useState(false);
+  const [processingAddon, setProcessingAddon] = useState(false);
 
   const workspace = useWorkspace();
-  const { user } = useAuth();
+  const { user, setPauseAutoLock } = useAuth();
   const currentWorkspace =
     workspace.currentWorkspace ||
     workspace.workspaces.find((w) => w.id === workspace.currentWorkspaceId);
@@ -235,6 +237,22 @@ export default function SubscriptionScreen({ navigation }) {
     };
   }, []);
 
+  // When screen regains focus (e.g., after purchase), refresh subscription
+  useEffect(() => {
+    if (!navigation) return;
+    
+    const unsubscribe = navigation.addListener('focus', async () => {
+      // Refresh subscription to see if purchase succeeded
+      try {
+        await refreshBilling();
+      } catch (err) {
+        console.error('Failed to refresh billing after focus:', err);
+      }
+    });
+
+    return unsubscribe;
+  }, [navigation]);
+
   const totalAmount = useMemo(() => {
     if (!plans) return 0;
     const yearly = billingCycle === 'yearly';
@@ -246,28 +264,14 @@ export default function SubscriptionScreen({ navigation }) {
         ? plans?.pro?.pricing?.monthly || 7000
         : plans?.basic?.pricing?.monthly || 2500;
 
-    const addonPrice =
-      addons.workspaceSlots *
-        (yearly
-          ? plans?.pro?.addons?.workspaceSlot?.yearly || Math.round(1500 * 12 * 0.8)
-          : plans?.pro?.addons?.workspaceSlot?.monthly || 1500) +
-      addons.staffSeats *
-        (yearly
-          ? plans?.pro?.addons?.staffSeat?.yearly || Math.round(500 * 12 * 0.8)
-          : plans?.pro?.addons?.staffSeat?.monthly || 500) +
-      addons.whatsappBundles *
-        (yearly
-          ? plans?.pro?.addons?.whatsappBundle100?.yearly ||
-            Math.round(2000 * 12 * 0.8)
-          : plans?.pro?.addons?.whatsappBundle100?.monthly || 2000);
-    return applyPlayMarkup(planPrice + addonPrice);
-  }, [plans, selectedPlan, addons, billingCycle]);
+    return applyPlayMarkup(planPrice);
+  }, [plans, selectedPlan, billingCycle]);
 
-  const bump = (key, delta) => {
-    setAddons((prev) => {
-      const next = Math.max(0, (prev[key] || 0) + delta);
-      return { ...prev, [key]: next };
-    });
+  const toggleAddon = (key) => {
+    setSelectedAddons((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
   };
 
   const notifyOwner = async () => {
@@ -315,13 +319,6 @@ export default function SubscriptionScreen({ navigation }) {
       );
       return;
     }
-    if (selectedPlan !== 'pro' && (addons.workspaceSlots || addons.staffSeats || addons.whatsappBundles)) {
-      Alert.alert(
-        'Add-ons require Pro',
-        'Switch to the Pro plan before purchasing add-ons.',
-      );
-      return;
-    }
 
     if (Platform.OS === 'android' && GoogleBilling.isAvailable()) {
       const packageName = getAndroidPackageName();
@@ -335,8 +332,9 @@ export default function SubscriptionScreen({ navigation }) {
 
       try {
         setProcessing(true);
+        // Pause auto-lock while redirecting to Google Play for payment
+        setPauseAutoLock(true);
         const subscriptionSku = resolveSubscriptionSku(selectedPlan, billingCycle);
-        const purchasesToAcknowledge = [];
         const shouldPurchasePlan =
           !subscription?.plan ||
           subscription?.status !== 'active' ||
@@ -347,10 +345,6 @@ export default function SubscriptionScreen({ navigation }) {
           const subscriptionPurchase = await GoogleBilling.purchaseSubscription(
             subscriptionSku,
           );
-          purchasesToAcknowledge.push({
-            purchase: subscriptionPurchase,
-            isConsumable: false,
-          });
           const subscriptionToken = getPurchaseToken(subscriptionPurchase);
           setLastReference(subscriptionToken || null);
 
@@ -368,60 +362,53 @@ export default function SubscriptionScreen({ navigation }) {
                 'Subscription purchase verification failed.',
             );
           }
-        }
 
-        const addonDefinitions = [
-          { key: 'workspaceSlots', purchaseKind: 'addon_workspace_slot' },
-          { key: 'staffSeats', purchaseKind: 'addon_staff_seat' },
-          { key: 'whatsappBundles', purchaseKind: 'addon_whatsapp_bundle_100' },
-        ];
-
-        for (const addon of addonDefinitions) {
-          const quantity = Number(addons?.[addon.key] || 0);
-          if (quantity <= 0) continue;
-
-          const addonSku = resolveAddonSku(addon.key, billingCycle);
-          if (!addonSku) {
-            throw new Error(`Missing Google Play SKU for ${addon.key}.`);
+          // Acknowledge purchase with error handling
+          try {
+            await GoogleBilling.acknowledgePurchase(subscriptionPurchase, {
+              isConsumable: false,
+            });
+          } catch (ackErr) {
+            console.error('⚠️ Failed to acknowledge purchase:', ackErr);
+            Alert.alert(
+              'Acknowledgement Issue',
+              'Purchase verified but Google Play acknowledgement had an issue. Try verifying payment again if needed.',
+            );
+            // Continue anyway - user sees success
           }
 
-          for (let i = 0; i < quantity; i += 1) {
-            const addonPurchase = await GoogleBilling.purchaseProduct(addonSku);
-            purchasesToAcknowledge.push({
-              purchase: addonPurchase,
-              isConsumable: true,
-            });
-            const addonToken = getPurchaseToken(addonPurchase);
-            const addonResult = await api.post('/billing/verify/google', {
-              packageName,
-              productId: getPurchaseProductId(addonPurchase, addonSku),
-              purchaseToken: addonToken,
-              purchaseType: 'product',
-              purchaseKind: addon.purchaseKind,
-              billingCycle,
-              workspaceId: currentWorkspace?.id,
-            });
-            if (!addonResult?.verified) {
-              throw new Error(
-                addonResult?.error ||
-                  `Add-on verification failed for ${addon.key} (#${i + 1}).`,
+          Alert.alert('Subscription', 'Plan verified and activated.');
+          
+          // Refresh billing and check if trial is active
+          await refreshBilling();
+          
+          // If Pro + trial, offer to show addons
+          const updatedSub = subscriptionResult?.subscription;
+          if (
+            selectedPlan === 'pro' &&
+            updatedSub?.status === 'trialing' &&
+            getTrialDaysLeft(updatedSub) > 0
+          ) {
+            setTimeout(() => {
+              Alert.alert(
+                'Add-ons available',
+                'You can now add extra workspace slots, staff seats, or WhatsApp bundles. Would you like to view options?',
+                [
+                  { text: 'Not now', onPress: () => { if (isModal) navigation.goBack(); } },
+                  { text: 'View add-ons', onPress: () => setShowAddonModal(true) },
+                ],
               );
-            }
+            }, 500);
           }
+        } else {
+          Alert.alert('Already subscribed', 'You already have this plan.');
         }
-
-        for (const purchaseRecord of purchasesToAcknowledge) {
-          await GoogleBilling.acknowledgePurchase(
-            purchaseRecord.purchase,
-            { isConsumable: purchaseRecord.isConsumable },
-          );
-        }
-        Alert.alert('Subscription', 'Subscription verified and activated.');
-        await refreshBilling();
       } catch (err) {
         Alert.alert('Google Billing', err?.message || 'Purchase failed');
       } finally {
         setProcessing(false);
+        // Re-enable auto-lock after payment flow completes
+        setPauseAutoLock(false);
       }
       return;
     }
@@ -432,7 +419,101 @@ export default function SubscriptionScreen({ navigation }) {
     );
   };
 
-  const verifyLastPayment = async () => {
+  const startAddonCheckout = async () => {
+    if (!isWorkspaceOwner) {
+      Alert.alert('Permission required', 'Only workspace owners can purchase add-ons.');
+      return;
+    }
+    if (onlineRequired) {
+      Alert.alert('Internet required', 'Connect to the internet to purchase add-ons.');
+      return;
+    }
+
+    const selectedAddonsList = Object.entries(selectedAddons)
+      .filter(([, selected]) => selected)
+      .map(([key]) => key);
+
+    if (selectedAddonsList.length === 0) {
+      Alert.alert('No add-ons selected', 'Select at least one add-on to proceed.');
+      return;
+    }
+
+    if (Platform.OS === 'android' && GoogleBilling.isAvailable()) {
+      const packageName = getAndroidPackageName();
+      if (!packageName) {
+        Alert.alert('Billing configuration error', 'Android package name is missing.');
+        return;
+      }
+
+      try {
+        setProcessingAddon(true);
+        // Pause auto-lock while redirecting to Google Play for addon purchases
+        setPauseAutoLock(true);
+        
+        const addonMap = {
+          workspaceSlot: { purchaseKind: 'addon_workspace_slot', key: 'workspaceSlots' },
+          staffSeat: { purchaseKind: 'addon_staff_seat', key: 'staffSeats' },
+          whatsappBundle: { purchaseKind: 'addon_whatsapp_bundle_100', key: 'whatsappBundles' },
+        };
+
+        for (const addonKey of selectedAddonsList) {
+          const addonConfig = addonMap[addonKey];
+          if (!addonConfig) continue;
+
+          const addonSku = resolveAddonSku(addonKey, billingCycle);
+          if (!addonSku) {
+            throw new Error(`Missing Google Play SKU for ${addonKey}.`);
+          }
+
+          const addonPurchase = await GoogleBilling.purchaseProduct(addonSku);
+          const addonToken = getPurchaseToken(addonPurchase);
+
+          const addonResult = await api.post('/billing/verify/google', {
+            packageName,
+            productId: getPurchaseProductId(addonPurchase, addonSku),
+            purchaseToken: addonToken,
+            purchaseType: 'product',
+            purchaseKind: addonConfig.purchaseKind,
+            billingCycle,
+            workspaceId: currentWorkspace?.id,
+          });
+
+          if (!addonResult?.verified) {
+            throw new Error(
+              addonResult?.error ||
+                `Add-on verification failed for ${addonKey}.`,
+            );
+          }
+
+          // Acknowledge with error handling
+          try {
+            await GoogleBilling.acknowledgePurchase(addonPurchase, {
+              isConsumable: true,
+            });
+          } catch (ackErr) {
+            console.error(`⚠️ Failed to acknowledge ${addonKey}:`, ackErr);
+            // Continue anyway
+          }
+        }
+
+        Alert.alert('Add-ons purchased', 'Your add-ons have been verified and activated.');
+        setShowAddonModal(false);
+        setSelectedAddons({ workspaceSlot: false, staffSeat: false, whatsappBundle: false });
+        await refreshBilling();
+      } catch (err) {
+        Alert.alert('Add-on purchase failed', err?.message || 'Please try again.');
+      } finally {
+        setProcessingAddon(false);
+        // Re-enable auto-lock after addon payment flow completes
+        setPauseAutoLock(false);
+      }
+      return;
+    }
+
+    Alert.alert('Unsupported platform', 'Google Play Billing is only available on Android.');
+  };
+
+  const verifyPayment = async () => {
     if (onlineRequired) {
       Alert.alert(
         'Internet required',
@@ -450,6 +531,8 @@ export default function SubscriptionScreen({ navigation }) {
 
     try {
       setProcessing(true);
+      // Pause auto-lock while calling restorePurchases (may take time)
+      setPauseAutoLock(true);
       if (Platform.OS !== 'android' || !GoogleBilling.isAvailable()) {
         throw new Error(
           'Google Play Billing verification is only available on Android builds.',
@@ -493,6 +576,8 @@ export default function SubscriptionScreen({ navigation }) {
       );
     } finally {
       setProcessing(false);
+      // Re-enable auto-lock after payment verification completes
+      setPauseAutoLock(false);
     }
   };
 
@@ -561,27 +646,35 @@ export default function SubscriptionScreen({ navigation }) {
         >
           Current status
         </Text>
-        <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
-          Plan: {(subscription?.plan || 'basic').toUpperCase()}
-        </Text>
-        <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
-          Status: {(subscription?.status || 'active').toUpperCase()}
-        </Text>
-        <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
-          Billing cycle: {(subscription?.billingCycle || billingCycle).toUpperCase()}
-        </Text>
-        <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
-          Trial days left: {trialDaysLeft}
-        </Text>
-        <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
-          Renews / ends:{' '}
-          {subscription?.currentPeriodEndsAt
-            ? new Date(subscription.currentPeriodEndsAt).toLocaleDateString()
-            : 'Not available'}
-        </Text>
-        <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
-          Workspace usage: {workspaceCount}/{usage?.limits?.workspaceLimit ?? 0}
-        </Text>
+        {subscription?.currentPeriodEndsAt ? (
+          <>
+            <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
+              Plan: {(subscription?.plan || 'basic').toUpperCase()}
+            </Text>
+            <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
+              Status: {(subscription?.status || 'active').toUpperCase()}
+            </Text>
+            <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
+              Billing cycle: {(subscription?.billingCycle || billingCycle).toUpperCase()}
+            </Text>
+            {subscription?.status === 'trialing' && (
+              <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
+                Trial days left: {trialDaysLeft}
+              </Text>
+            )}
+            <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
+              Renews / ends:{' '}
+              {new Date(subscription.currentPeriodEndsAt).toLocaleDateString()}
+            </Text>
+            <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
+              Workspace usage: {workspaceCount}/{usage?.limits?.workspaceLimit ?? 0}
+            </Text>
+          </>
+        ) : (
+          <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
+            No active subscription. Select a plan below to get started.
+          </Text>
+        )}
       </Card>
 
       <Card>
@@ -689,90 +782,42 @@ export default function SubscriptionScreen({ navigation }) {
         >
           Pro add-ons
         </Text>
-        {!addonsAllowed && (
-          <Text
-            style={[
-              styles.meta,
-              { color: theme.colors.warning, marginBottom: 8 },
-            ]}
-          >
-            Add-ons are disabled during active trial.
-          </Text>
-        )}
-        {selectedPlan !== 'pro' && (
+        {selectedPlan !== 'pro' ? (
           <Text
             style={[
               styles.meta,
               { color: theme.colors.textSecondary, marginBottom: 8 },
             ]}
           >
-            Select Pro to enable add-ons.
+            Upgrade to Pro plan to enable add-ons.
+          </Text>
+        ) : subscription?.status === 'trialing' && trialDaysLeft > 0 ? (
+          <>
+            <Text
+              style={[
+                styles.meta,
+                { color: theme.colors.textSecondary, marginBottom: 12 },
+              ]}
+            >
+              Add extra capacity to your Pro subscription. Each add-on is a separate purchase.
+            </Text>
+            <AppButton
+              title="Browse Add-ons"
+              variant="secondary"
+              onPress={() => setShowAddonModal(true)}
+              disabled={processing}
+            />
+          </>
+        ) : (
+          <Text
+            style={[
+              styles.meta,
+              { color: theme.colors.textSecondary, marginBottom: 8 },
+            ]}
+          >
+            Add-ons are available after purchasing a plan.
           </Text>
         )}
-
-        {[
-          { key: 'workspaceSlots', label: 'Extra workspace slot', unit: 1500 },
-          { key: 'staffSeats', label: 'Extra staff seat', unit: 500 },
-          {
-            key: 'whatsappBundles',
-            label: 'WhatsApp bundle (100 msgs)',
-            unit: 2000,
-          },
-        ].map((row) => (
-          <View key={row.key} style={styles.addonRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.meta, { color: theme.colors.textPrimary }]}>
-                {row.label}
-              </Text>
-              <Text
-                style={[styles.meta, { color: theme.colors.textSecondary }]}
-              >
-                NGN{' '}
-                {(
-                  applyPlayMarkup(
-                    billingCycle === 'yearly'
-                    ? Math.round(row.unit * 12 * 0.8)
-                    : row.unit,
-                  )
-                ).toLocaleString()}{' '}
-                / {billingCycle === 'yearly' ? 'year' : 'month'}
-              </Text>
-            </View>
-            <View style={styles.counter}>
-              <TouchableOpacity
-                disabled={!addonsSelectable}
-                onPress={() => bump(row.key, -1)}
-              >
-                <MaterialIcons
-                  name="remove-circle-outline"
-                  size={24}
-                  color={
-                    addonsSelectable
-                      ? theme.colors.textPrimary
-                      : theme.colors.border
-                  }
-                />
-              </TouchableOpacity>
-              <Text
-                style={[styles.counterValue, { color: theme.colors.textPrimary }]}
-              >
-                {addons[row.key]}
-              </Text>
-              <TouchableOpacity
-                disabled={!addonsSelectable}
-                onPress={() => bump(row.key, 1)}
-              >
-                <MaterialIcons
-                  name="add-circle-outline"
-                  size={24}
-                  color={
-                    addonsSelectable ? theme.colors.primary : theme.colors.border
-                  }
-                />
-              </TouchableOpacity>
-            </View>
-          </View>
-        ))}
       </Card>
 
       <Card>
@@ -823,12 +868,124 @@ export default function SubscriptionScreen({ navigation }) {
           disabled={processing || !isWorkspaceOwner}
           style={{ marginTop: 10 }}
         />
-        {!!(addons.workspaceSlots || addons.staffSeats || addons.whatsappBundles) && (
-          <Text style={[styles.meta, { color: theme.colors.textSecondary, marginTop: 10 }]}>
-            Add-ons are purchased as separate Google Play in-app products (one purchase per unit).
-          </Text>
-        )}
       </Card>
+
+      {/* Addon Selection Modal */}
+      {showAddonModal && (
+        <View style={[styles.modal, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
+          <View
+            style={[
+              styles.modalContent,
+              { backgroundColor: theme.colors.background },
+            ]}
+          >
+            <View style={styles.modalHeader}>
+              <Text
+                style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}
+              >
+                Add-ons for your Pro plan
+              </Text>
+              <TouchableOpacity onPress={() => setShowAddonModal(false)}>
+                <MaterialIcons
+                  name="close"
+                  size={24}
+                  color={theme.colors.textPrimary}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={{ padding: 16 }}>
+              <Text
+                style={[
+                  styles.meta,
+                  { color: theme.colors.textSecondary, marginBottom: 16 },
+                ]}
+              >
+                Select the add-ons you'd like to purchase. Each add-on is a separate charge.
+              </Text>
+
+              {[
+                { key: 'workspaceSlot', label: 'Extra workspace slot', unit: 1500 },
+                { key: 'staffSeat', label: 'Extra staff seat', unit: 500 },
+                {
+                  key: 'whatsappBundle',
+                  label: 'WhatsApp bundle (100 msgs)',
+                  unit: 2000,
+                },
+              ].map((addon) => {
+                const price = applyPlayMarkup(
+                  billingCycle === 'yearly'
+                    ? Math.round(addon.unit * 12 * 0.8)
+                    : addon.unit,
+                );
+                const isSelected = selectedAddons[addon.key];
+                return (
+                  <TouchableOpacity
+                    key={addon.key}
+                    style={[
+                      styles.addonCheckbox,
+                      {
+                        borderColor: isSelected
+                          ? theme.colors.primary
+                          : theme.colors.border,
+                        backgroundColor: isSelected
+                          ? `${theme.colors.primary}15`
+                          : 'transparent',
+                      },
+                    ]}
+                    onPress={() => toggleAddon(addon.key)}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={[
+                          styles.meta,
+                          { color: theme.colors.textPrimary, fontWeight: '600' },
+                        ]}
+                      >
+                        {addon.label}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.meta,
+                          { color: theme.colors.textSecondary },
+                        ]}
+                      >
+                        NGN {price.toLocaleString()} /{' '}
+                        {billingCycle === 'yearly' ? 'year' : 'month'}
+                      </Text>
+                    </View>
+                    <MaterialIcons
+                      name={isSelected ? 'check-circle' : 'radio-button-unchecked'}
+                      size={24}
+                      color={
+                        isSelected ? theme.colors.primary : theme.colors.border
+                      }
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+
+              <View style={{ marginTop: 20, gap: 10 }}>
+                <AppButton
+                  title={processingAddon ? 'Purchasing...' : 'Continue with selected'}
+                  onPress={startAddonCheckout}
+                  loading={processingAddon}
+                  disabled={
+                    processingAddon ||
+                    !Object.values(selectedAddons).some((v) => v)
+                  }
+                />
+                <AppButton
+                  title="Skip add-ons"
+                  variant="secondary"
+                  onPress={() => setShowAddonModal(false)}
+                  disabled={processingAddon}
+                />
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -875,4 +1032,33 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   total: { fontSize: 18, fontWeight: '800', marginBottom: 10 },
+  modal: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '85%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  addonCheckbox: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
 });

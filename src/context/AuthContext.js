@@ -22,13 +22,20 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [requiresReAuth, setRequiresReAuth] = useState(false);
+  const [pauseAutoLock, setPauseAutoLock] = useState(false);
   const appStateRef = useRef(AppState.currentState);
   const userRef = useRef(null);
+  const pauseAutoLockRef = useRef(false);
 
   // Keep userRef in sync so AppState listener can access it without stale closure
   useEffect(() => {
     userRef.current = user;
   }, [user]);
+
+  // Keep pauseAutoLockRef in sync with pauseAutoLock state
+  useEffect(() => {
+    pauseAutoLockRef.current = pauseAutoLock;
+  }, [pauseAutoLock]);
 
   const saveAuth = async (newToken, userData, password) => {
     try {
@@ -238,7 +245,9 @@ export const AuthProvider = ({ children }) => {
       const prev = appStateRef.current;
       appStateRef.current = nextState;
       const wasBackgrounded = typeof prev === 'string' && /(inactive|background)/.test(prev);
-      if (wasBackgrounded && nextState === 'active' && userRef.current) {
+      // Skip auto-lock if pauseAutoLock is enabled (e.g., during payment flow)
+      // Use ref to avoid recreating listener when pauseAutoLock changes
+      if (wasBackgrounded && nextState === 'active' && userRef.current && !pauseAutoLockRef.current) {
         setRequiresReAuth(true);
         // Try biometric unlock if Android and opted in
         if (
@@ -262,6 +271,7 @@ export const AuthProvider = ({ children }) => {
   return (
     <AuthContext.Provider value={{
       user, token, loading, requiresReAuth, login, logout, register, unlockSession,
+      pauseAutoLock, setPauseAutoLock,
       setBiometricOptIn: biometric.setBiometricOptIn,
       getBiometricOptIn: biometric.getBiometricOptIn,
       isBiometricAvailable: biometric.isBiometricAvailable,

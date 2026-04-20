@@ -52,6 +52,22 @@ function RootNavigator() {
   const [subscription, setSubscription] = useState(null);
   const [pendingInvites, setPendingInvites] = useState([]);
   const [loadingSubscription, setLoadingSubscription] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Expose refresh function for SubscriptionScreen to call after purchase
+  const refreshSubscription = async () => {
+    setLoadingSubscription(true);
+    try {
+      const subRes = await api.get('/billing/subscription').catch(() => null);
+      setSubscription(subRes);
+      // Trigger re-render of this component to update routing
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      // Fallback
+    } finally {
+      setLoadingSubscription(false);
+    }
+  };
 
   // Load subscription and pending invites when user logs in
   useEffect(() => {
