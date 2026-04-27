@@ -60,6 +60,12 @@ const YEARLY_DISCOUNT_RATE = 0.2;
 @Injectable()
 export class BillingService {
   private readonly googleWebhookAuthClient = new OAuth2Client();
+  private static readonly ACTIVE_SUBSCRIPTION_STATES = new Set([
+    'SUBSCRIPTION_STATE_ACTIVE',
+    'SUBSCRIPTION_STATE_IN_GRACE_PERIOD',
+    'SUBSCRIPTION_STATE_ON_HOLD',
+    'SUBSCRIPTION_STATE_PAUSED',
+  ]);
 
   constructor(
     @InjectRepository(User)
@@ -485,17 +491,82 @@ export class BillingService {
 
   private async fetchGoogleSubscriptionPurchase(
     packageName: string,
-    productId: string,
     purchaseToken: string,
   ) {
     const androidpublisher = await this.getAndroidPublisherClient();
-    const res = await androidpublisher.purchases.subscriptions.get({
+    const res = await androidpublisher.purchases.subscriptionsv2.get({
       packageName,
-      subscriptionId: productId,
       token: purchaseToken,
     } as any);
 
     return res.data || {};
+  }
+
+  private getGoogleSubscriptionLineItem(
+    verifiedData: Record<string, any>,
+    fallbackProductId?: string,
+  ) {
+    const lineItems = Array.isArray(verifiedData?.lineItems)
+      ? verifiedData.lineItems
+      : [];
+    if (!lineItems.length) {
+      return null;
+    }
+
+    if (fallbackProductId) {
+      const matched = lineItems.find(
+        (item: Record<string, any>) => item?.productId === fallbackProductId,
+      );
+      if (matched) {
+        return matched;
+      }
+    }
+
+    return lineItems[0];
+  }
+
+  private getGoogleSubscriptionExpiryDate(
+    verifiedData: Record<string, any>,
+    fallbackProductId?: string,
+  ) {
+    const lineItem = this.getGoogleSubscriptionLineItem(
+      verifiedData,
+      fallbackProductId,
+    );
+    const expiryTime = lineItem?.expiryTime;
+    if (!expiryTime) {
+      return null;
+    }
+
+    const expiryDate = new Date(expiryTime);
+    return Number.isNaN(expiryDate.getTime()) ? null : expiryDate;
+  }
+
+  private isAcknowledgedGoogleSubscription(verifiedData: Record<string, any>) {
+    return (
+      verifiedData?.acknowledgementState ===
+      'ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED'
+    );
+  }
+
+  private isActiveGoogleSubscription(verifiedData: Record<string, any>) {
+    return BillingService.ACTIVE_SUBSCRIPTION_STATES.has(
+      String(verifiedData?.subscriptionState || ''),
+    );
+  }
+
+  private async acknowledgeGoogleSubscriptionPurchase(
+    packageName: string,
+    productId: string,
+    purchaseToken: string,
+  ) {
+    const androidpublisher = await this.getAndroidPublisherClient();
+    await androidpublisher.purchases.subscriptions.acknowledge({
+      packageName,
+      subscriptionId: productId,
+      token: purchaseToken,
+      requestBody: {},
+    } as any);
   }
 
   private async fetchGoogleProductPurchase(
@@ -515,6 +586,7 @@ export class BillingService {
 
   private async persistVerifiedGoogleSubscription(
     userId: string,
+    packageName: string,
     productId: string,
     purchaseToken: string,
     verifiedData: Record<string, any>,
@@ -535,31 +607,47 @@ export class BillingService {
       productId,
       subscription.billingCycle || 'monthly',
     );
-    
-    // Google Play is the source of truth for trial information
-    // If product has freeTrialPeriod, user is on trial
-    const hasFreeTrialPeriod = !!verifiedData?.freeTrialPeriod;
-    const isPro = subscription.plan === 'pro';
-    
-    if (hasFreeTrialPeriod && isPro) {
-      // Pro plan with trial: set status to trialing and calculate trial end date
-      // Google Play's freeTrialPeriod is in ISO 8601 duration format (e.g., "P14D")
-      // We set trial to end 14 days from now (or from the trial end if available)
+    const lineItem = this.getGoogleSubscriptionLineItem(verifiedData, productId);
+    const expiryDate =
+      this.getGoogleSubscriptionExpiryDate(verifiedData, productId) ||
+      subscription.currentPeriodEndsAt ||
+      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const hasPendingAcknowledgement = !this.isAcknowledgedGoogleSubscription(
+      verifiedData,
+    );
+    const activeStatusFromPlay = this.isActiveGoogleSubscription(verifiedData);
+    const offerTags = Array.isArray(lineItem?.offerDetails?.offerTags)
+      ? lineItem.offerDetails.offerTags
+      : [];
+    const isTrialOffer =
+      !!lineItem?.offerDetails?.offerId &&
+      offerTags.some((tag: string) => /trial/i.test(String(tag)));
+
+    if (hasPendingAcknowledgement) {
+      await this.acknowledgeGoogleSubscriptionPurchase(
+        packageName,
+        productId,
+        purchaseToken,
+      );
+      verifiedData = {
+        ...verifiedData,
+        acknowledgementState: 'ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED',
+      };
+    }
+
+    if (activeStatusFromPlay && isTrialOffer) {
       subscription.status = 'trialing';
-      subscription.trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+      subscription.trialEndsAt = expiryDate;
     } else {
-      // Basic plan or no trial: set status to active
       subscription.status =
-        this.mapGoogleNotificationStatus(options?.notificationType) || 'active';
+        this.mapGoogleNotificationStatus(options?.notificationType) ||
+        (activeStatusFromPlay ? 'active' : 'expired');
       subscription.trialEndsAt = null;
     }
-    
+
     subscription.currentPeriodStartAt =
       subscription.currentPeriodStartAt || new Date();
-    subscription.currentPeriodEndsAt = verifiedData?.expiryTimeMillis
-      ? new Date(Number(verifiedData.expiryTimeMillis))
-      : subscription.currentPeriodEndsAt ||
-        new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    subscription.currentPeriodEndsAt = expiryDate;
     subscription.lastPaymentReference = purchaseToken;
     subscription.metadata = {
       ...(subscription.metadata || {}),
@@ -613,7 +701,6 @@ export class BillingService {
   ) {
     const verifiedData = await this.fetchGoogleSubscriptionPurchase(
       packageName,
-      productId,
       purchaseToken,
     );
     const linkedPurchaseToken = verifiedData?.linkedPurchaseToken || null;
@@ -633,6 +720,7 @@ export class BillingService {
 
     await this.persistVerifiedGoogleSubscription(
       existingSubscription.userId,
+      packageName,
       productId,
       purchaseToken,
       verifiedData,
@@ -780,12 +868,19 @@ export class BillingService {
       if (type === 'subscription') {
         const verifiedData = await this.fetchGoogleSubscriptionPurchase(
           pkg,
-          productId,
           token,
         );
+        if (!this.isActiveGoogleSubscription(verifiedData)) {
+          throw new BadRequestException(
+            `Google Play subscription is not active: ${
+              verifiedData?.subscriptionState || 'UNKNOWN'
+            }`,
+          );
+        }
         if (purchaseKind === 'plan') {
           const subscription = await this.persistVerifiedGoogleSubscription(
             userId,
+            pkg,
             productId,
             token,
             verifiedData,
