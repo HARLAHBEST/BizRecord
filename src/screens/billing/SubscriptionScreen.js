@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -27,8 +28,10 @@ import {
 
 const PLAN_ORDER = ['basic', 'pro'];
 const PLAY_PRICE_MARKUP = 1.075;
-const isLikelyOfflineError = (err) =>
-  !err?.response && /network|offline|timeout|fetch/i.test(String(err?.message || ''));
+const LAST_PURCHASE_TOKEN_STORAGE_KEY = 'lastPurchaseToken';
+const PENDING_PURCHASE_FINISH_STORAGE_KEY = 'pendingGooglePurchaseFinish';
+// Match the client.js offline detection: only if NO response (true offline)
+const isLikelyOfflineError = (err) => !err?.response;
 const DEFAULT_ADDONS = {
   workspaceSlot: { monthly: 1500, yearly: Math.round(1500 * 12 * 0.8) },
   staffSeat: { monthly: 500, yearly: Math.round(500 * 12 * 0.8) },
@@ -64,12 +67,7 @@ function normalizePlansResponse(payload) {
 }
 
 function getPurchaseToken(purchase) {
-  return (
-    purchase?.purchaseToken ||
-    purchase?.purchaseTokenAndroid ||
-    purchase?.token ||
-    ''
-  );
+  return GoogleBilling.extractPurchaseToken(purchase);
 }
 
 function getPurchaseProductId(purchase, fallback = '') {
@@ -118,6 +116,11 @@ export default function SubscriptionScreen({ navigation }) {
   const [onlineRequired, setOnlineRequired] = useState(false);
   const [showAddonModal, setShowAddonModal] = useState(false);
   const [processingAddon, setProcessingAddon] = useState(false);
+  const currentWorkspaceIdRef = useRef(null);
+  const processedTokensRef = useRef(new Set());
+  const processingTokensRef = useRef(new Set());
+  const handlePurchaseRef = useRef(null);
+  const handleRecoveredPurchasesRef = useRef(null);
 
   const workspace = useWorkspace();
   const { user, setPauseAutoLock } = useAuth();
@@ -130,6 +133,70 @@ export default function SubscriptionScreen({ navigation }) {
   const addonsSelectable = addonsAllowed && selectedPlan === 'pro';
   const workspaceCount = workspace.workspaces?.length || 0;
   const trialDaysLeft = getTrialDaysLeft(subscription);
+
+  const getPurchaseVerificationMeta = (purchase) => {
+    const productId = getPurchaseProductId(purchase);
+    const addonSkus = getAddonSkuMap();
+    let purchaseType = 'subscription';
+    let purchaseKind;
+    let purchaseBillingCycle;
+
+    if (Object.values(addonSkus).includes(productId)) {
+      purchaseType = 'product';
+      purchaseBillingCycle = productId.includes('yearly') ? 'yearly' : 'monthly';
+
+      if (productId === addonSkus.workspace_monthly || productId === addonSkus.workspace_yearly) {
+        purchaseKind = 'addon_workspace_slot';
+      } else if (productId === addonSkus.staff_monthly || productId === addonSkus.staff_yearly) {
+        purchaseKind = 'addon_staff_seat';
+      } else if (productId === addonSkus.whatsapp_monthly || productId === addonSkus.whatsapp_yearly) {
+        purchaseKind = 'addon_whatsapp_bundle_100';
+      }
+    }
+
+    return { productId, purchaseType, purchaseKind, purchaseBillingCycle };
+  };
+
+  const isCompletedAndroidPurchase = (purchase) => {
+    if (!purchase?.purchaseToken) {
+      return false;
+    }
+
+    if (
+      Platform.OS === 'android' &&
+      typeof purchase?.purchaseStateAndroid === 'number' &&
+      purchase.purchaseStateAndroid !== 0
+    ) {
+      return false;
+    }
+
+    return true;
+  };
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadLastPurchaseToken = async () => {
+      try {
+        const storedToken = await AsyncStorage.getItem(LAST_PURCHASE_TOKEN_STORAGE_KEY);
+        if (mounted && storedToken) {
+          setLastReference(storedToken);
+        }
+      } catch {
+        // ignore storage read errors
+      }
+    };
+
+    loadLastPurchaseToken();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    currentWorkspaceIdRef.current = currentWorkspace?.id || null;
+  }, [currentWorkspace?.id]);
 
   const loadPlayProducts = async () => {
     if (Platform.OS !== 'android' || !GoogleBilling.isAvailable()) {
@@ -156,6 +223,121 @@ export default function SubscriptionScreen({ navigation }) {
       setPlayProducts({});
     }
   };
+
+  const handleRecoveredPurchases = async (
+    purchases,
+    { acknowledge = true, showSuccessAlert = false } = {},
+  ) => {
+    const validPurchases = purchases.filter(isCompletedAndroidPurchase);
+
+    for (const purchase of validPurchases) {
+      try {
+        await handlePurchase(purchase, { acknowledge, showSuccessAlert });
+      } catch (err) {
+        console.error('Failed to process recovered Google Play purchase:', err);
+      }
+    }
+  };
+
+  const finalizePurchase = async (purchase, purchaseType) => {
+    const token = getPurchaseToken(purchase);
+    const isConsumable = purchaseType === 'product';
+
+    await AsyncStorage.setItem(
+      PENDING_PURCHASE_FINISH_STORAGE_KEY,
+      JSON.stringify({
+        token,
+        isConsumable,
+      }),
+    );
+
+    try {
+      await GoogleBilling.acknowledgePurchase(purchase, {
+        isConsumable,
+      });
+    } finally {
+      const pendingFinishRaw = await AsyncStorage.getItem(
+        PENDING_PURCHASE_FINISH_STORAGE_KEY,
+      );
+      const pendingFinish = pendingFinishRaw ? JSON.parse(pendingFinishRaw) : null;
+      if (pendingFinish?.token === token) {
+        await AsyncStorage.removeItem(PENDING_PURCHASE_FINISH_STORAGE_KEY);
+      }
+    }
+  };
+
+  const handlePurchase = async (
+    purchase,
+    { acknowledge = true, showSuccessAlert = true } = {},
+  ) => {
+    const token = getPurchaseToken(purchase);
+
+    if (!token) {
+      console.warn('Missing Google Play purchase token:', purchase);
+      return false;
+    }
+
+    if (!isCompletedAndroidPurchase(purchase)) {
+      console.log('Purchase not completed yet:', purchase.purchaseStateAndroid, purchase);
+      return false;
+    }
+
+    if (processedTokensRef.current.has(token) || processingTokensRef.current.has(token)) {
+      return false;
+    }
+
+    processingTokensRef.current.add(token);
+    setLastReference(token);
+
+    try {
+      await AsyncStorage.setItem(LAST_PURCHASE_TOKEN_STORAGE_KEY, token);
+
+      const packageName = getAndroidPackageName();
+      const { productId, purchaseType, purchaseKind, purchaseBillingCycle } =
+        getPurchaseVerificationMeta(purchase);
+
+      const result = await api.post('/billing/verify/google', {
+        packageName,
+        productId,
+        purchaseToken: token,
+        purchaseType,
+        ...(purchaseType === 'product' && {
+          purchaseKind,
+          billingCycle: purchaseBillingCycle,
+        }),
+        workspaceId: currentWorkspaceIdRef.current,
+      });
+
+      if (!result?.verified) {
+        throw new Error(result?.error || 'Google Play verification failed.');
+      }
+
+      await AsyncStorage.setItem(LAST_PURCHASE_TOKEN_STORAGE_KEY, token);
+      await refreshBilling();
+
+      if (acknowledge) {
+        await finalizePurchase(purchase, purchaseType);
+      }
+
+      if (showSuccessAlert) {
+        Alert.alert(
+          'Success',
+          purchaseType === 'product' ? 'Add-on activated' : 'Subscription activated',
+        );
+      }
+
+      processingTokensRef.current.delete(token);
+      processedTokensRef.current.add(token);
+      return true;
+    } catch (err) {
+      processingTokensRef.current.delete(token);
+      console.error('Google Play verification failed:', err);
+      throw err;
+    }
+  };
+
+  handlePurchaseRef.current = handlePurchase;
+  handleRecoveredPurchasesRef.current = handleRecoveredPurchases;
 
   const refreshBilling = async () => {
     // If no current workspace, fetch user-level subscription and global plans
@@ -215,24 +397,69 @@ export default function SubscriptionScreen({ navigation }) {
   };
 
   useEffect(() => {
+    let mounted = true;
+
     const run = async () => {
       setLoading(true);
       try {
         await refreshBilling();
       } catch (err) {
+        if (!mounted) return;
         if (isLikelyOfflineError(err)) {
           setOnlineRequired(true);
         } else {
           Alert.alert('Billing', err?.message || 'Unable to load billing details.');
         }
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     };
 
     run();
 
     return () => {
+      mounted = false;
+    };
+
+  }, [currentWorkspace?.id]);
+
+  useEffect(() => {
+    if (!GoogleBilling.isAvailable()) {
+      return undefined;
+    }
+
+    let active = true;
+
+    const initializeGoogleBilling = async () => {
+      try {
+        await GoogleBilling.initPurchaseListeners(
+          async (purchase) => {
+            await handlePurchaseRef.current?.(purchase);
+          },
+          (error) => {
+            Alert.alert('Purchase failed', error?.message);
+          },
+        );
+
+        const purchases = await GoogleBilling.restorePurchases();
+        if (!active) {
+          return;
+        }
+
+        await handleRecoveredPurchasesRef.current?.(purchases, {
+          acknowledge: true,
+          showSuccessAlert: false,
+        });
+      } catch (err) {
+        console.error('Failed to initialize Google Billing:', err);
+      }
+    };
+
+    initializeGoogleBilling();
+
+    return () => {
+      active = false;
+      GoogleBilling.removeListeners();
       GoogleBilling.disconnect().catch(() => null);
     };
   }, []);
@@ -240,9 +467,8 @@ export default function SubscriptionScreen({ navigation }) {
   // When screen regains focus (e.g., after purchase), refresh subscription
   useEffect(() => {
     if (!navigation) return;
-    
+
     const unsubscribe = navigation.addListener('focus', async () => {
-      // Refresh subscription to see if purchase succeeded
       try {
         await refreshBilling();
       } catch (err) {
@@ -251,7 +477,7 @@ export default function SubscriptionScreen({ navigation }) {
     });
 
     return unsubscribe;
-  }, [navigation]);
+  }, [navigation, currentWorkspace?.id]);
 
   const totalAmount = useMemo(() => {
     if (!plans) return 0;
@@ -342,64 +568,8 @@ export default function SubscriptionScreen({ navigation }) {
           (subscription?.billingCycle || 'monthly') !== billingCycle;
 
         if (shouldPurchasePlan) {
-          const subscriptionPurchase = await GoogleBilling.purchaseSubscription(
-            subscriptionSku,
-          );
-          const subscriptionToken = getPurchaseToken(subscriptionPurchase);
-          setLastReference(subscriptionToken || null);
-
-          const subscriptionResult = await api.post('/billing/verify/google', {
-            packageName,
-            productId: getPurchaseProductId(subscriptionPurchase, subscriptionSku),
-            purchaseToken: subscriptionToken,
-            purchaseType: 'subscription',
-            workspaceId: currentWorkspace?.id,
-          });
-
-          if (!subscriptionResult?.verified) {
-            throw new Error(
-              subscriptionResult?.error ||
-                'Subscription purchase verification failed.',
-            );
-          }
-
-          // Acknowledge purchase with error handling
-          try {
-            await GoogleBilling.acknowledgePurchase(subscriptionPurchase, {
-              isConsumable: false,
-            });
-          } catch (ackErr) {
-            console.error('⚠️ Failed to acknowledge purchase:', ackErr);
-            Alert.alert(
-              'Acknowledgement Issue',
-              'Purchase verified but Google Play acknowledgement had an issue. Try verifying payment again if needed.',
-            );
-            // Continue anyway - user sees success
-          }
-
-          Alert.alert('Subscription', 'Plan verified and activated.');
-          
-          // Refresh billing and check if trial is active
-          await refreshBilling();
-          
-          // If Pro + trial, offer to show addons
-          const updatedSub = subscriptionResult?.subscription;
-          if (
-            selectedPlan === 'pro' &&
-            updatedSub?.status === 'trialing' &&
-            getTrialDaysLeft(updatedSub) > 0
-          ) {
-            setTimeout(() => {
-              Alert.alert(
-                'Add-ons available',
-                'You can now add extra workspace slots, staff seats, or WhatsApp bundles. Would you like to view options?',
-                [
-                  { text: 'Not now', onPress: () => { if (isModal) navigation.goBack(); } },
-                  { text: 'View add-ons', onPress: () => setShowAddonModal(true) },
-                ],
-              );
-            }, 500);
-          }
+          await GoogleBilling.purchaseSubscription(subscriptionSku);
+          // FIRE AND FORGET. Listener will handle the rest.
         } else {
           Alert.alert('Already subscribed', 'You already have this plan.');
         }
@@ -450,56 +620,18 @@ export default function SubscriptionScreen({ navigation }) {
         // Pause auto-lock while redirecting to Google Play for addon purchases
         setPauseAutoLock(true);
         
-        const addonMap = {
-          workspaceSlot: { purchaseKind: 'addon_workspace_slot', key: 'workspaceSlots' },
-          staffSeat: { purchaseKind: 'addon_staff_seat', key: 'staffSeats' },
-          whatsappBundle: { purchaseKind: 'addon_whatsapp_bundle_100', key: 'whatsappBundles' },
-        };
-
         for (const addonKey of selectedAddonsList) {
-          const addonConfig = addonMap[addonKey];
-          if (!addonConfig) continue;
-
           const addonSku = resolveAddonSku(addonKey, billingCycle);
           if (!addonSku) {
             throw new Error(`Missing Google Play SKU for ${addonKey}.`);
           }
 
-          const addonPurchase = await GoogleBilling.purchaseProduct(addonSku);
-          const addonToken = getPurchaseToken(addonPurchase);
-
-          const addonResult = await api.post('/billing/verify/google', {
-            packageName,
-            productId: getPurchaseProductId(addonPurchase, addonSku),
-            purchaseToken: addonToken,
-            purchaseType: 'product',
-            purchaseKind: addonConfig.purchaseKind,
-            billingCycle,
-            workspaceId: currentWorkspace?.id,
-          });
-
-          if (!addonResult?.verified) {
-            throw new Error(
-              addonResult?.error ||
-                `Add-on verification failed for ${addonKey}.`,
-            );
-          }
-
-          // Acknowledge with error handling
-          try {
-            await GoogleBilling.acknowledgePurchase(addonPurchase, {
-              isConsumable: true,
-            });
-          } catch (ackErr) {
-            console.error(`⚠️ Failed to acknowledge ${addonKey}:`, ackErr);
-            // Continue anyway
-          }
+          // FIRE AND FORGET. Listener will handle verification
+          await GoogleBilling.purchaseProduct(addonSku);
         }
 
-        Alert.alert('Add-ons purchased', 'Your add-ons have been verified and activated.');
         setShowAddonModal(false);
         setSelectedAddons({ workspaceSlot: false, staffSeat: false, whatsappBundle: false });
-        await refreshBilling();
       } catch (err) {
         Alert.alert('Add-on purchase failed', err?.message || 'Please try again.');
       } finally {
@@ -521,51 +653,62 @@ export default function SubscriptionScreen({ navigation }) {
       );
       return;
     }
-    if (!lastReference) {
-      Alert.alert(
-        'Verification',
-        'No recent Google Play purchase token was found yet. Start checkout first.',
-      );
-      return;
-    }
-
     try {
       setProcessing(true);
       // Pause auto-lock while calling restorePurchases (may take time)
       setPauseAutoLock(true);
+      const persistedReference =
+        lastReference || (await AsyncStorage.getItem(LAST_PURCHASE_TOKEN_STORAGE_KEY));
+
       if (Platform.OS !== 'android' || !GoogleBilling.isAvailable()) {
         throw new Error(
           'Google Play Billing verification is only available on Android builds.',
         );
       }
 
-      const packageName = getAndroidPackageName();
       const preferredSku = resolveSubscriptionSku(selectedPlan, billingCycle);
-      const purchases = await GoogleBilling.restorePurchases();
+      const purchases = (await GoogleBilling.restorePurchases()).filter(
+        isCompletedAndroidPurchase,
+      );
+
+      if (!purchases.length && !persistedReference) {
+        Alert.alert(
+          'Verification',
+          'No recent Google Play purchase was found yet. Start checkout first.',
+        );
+        return;
+      }
+
       const matchedPurchase =
         purchases.find((purchase) => getPurchaseProductId(purchase) === preferredSku) ||
-        purchases.find((purchase) => getPurchaseToken(purchase) === lastReference) ||
+        purchases.find(
+          (purchase) =>
+            persistedReference && getPurchaseToken(purchase) === persistedReference,
+        ) ||
         purchases[0];
 
       if (!matchedPurchase) {
         throw new Error('No Google Play subscription purchase was found to verify.');
       }
 
-      const result = await api.post('/billing/verify/google', {
-        packageName,
-        productId: getPurchaseProductId(matchedPurchase, preferredSku),
-        purchaseToken: getPurchaseToken(matchedPurchase),
-        purchaseType: 'subscription',
-        workspaceId: currentWorkspace?.id,
-      });
-
-      if (!result?.verified) {
-        throw new Error(result?.error || 'Google Play verification failed.');
+      if (persistedReference) {
+        setLastReference(persistedReference);
+        await AsyncStorage.setItem(LAST_PURCHASE_TOKEN_STORAGE_KEY, persistedReference);
       }
 
-      await GoogleBilling.acknowledgePurchase(matchedPurchase);
+      const matchedProductId = getPurchaseProductId(matchedPurchase, preferredSku);
+      await handlePurchase(
+        {
+          ...matchedPurchase,
+          productId: matchedProductId,
+        },
+        {
+          acknowledge: true,
+          showSuccessAlert: false,
+        },
+      );
+
       Alert.alert('Success', 'Subscription verified and updated from Google Play.');
-      await refreshBilling();
     } catch (err) {
       if (isLikelyOfflineError(err)) {
         setOnlineRequired(true);
@@ -864,7 +1007,7 @@ export default function SubscriptionScreen({ navigation }) {
         <AppButton
           title="Verify last purchase"
           variant="secondary"
-          onPress={verifyLastPayment}
+          onPress={verifyPayment}
           disabled={processing || !isWorkspaceOwner}
           style={{ marginTop: 10 }}
         />

@@ -1,8 +1,10 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { isUUID } from 'class-validator';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../auth/entities/user.entity';
@@ -89,6 +91,9 @@ export class BranchAccessService {
   }
 
   async getWorkspaceOrFail(workspaceId: string) {
+    if (!isUUID(String(workspaceId || ''))) {
+      throw new BadRequestException('workspaceId must be a valid UUID');
+    }
     const workspace = await this.workspacesRepository.findOne({
       where: { id: workspaceId },
       relations: ['createdBy'],
@@ -212,6 +217,9 @@ export class BranchAccessService {
     userId: string,
     options?: { minimumRole?: BranchRole; allowOwnerLike?: boolean },
   ) {
+    if (!isUUID(String(branchId || ''))) {
+      throw new BadRequestException('branchId must be a valid UUID');
+    }
     const branch = await this.branchesRepository.findOne({
       where: { id: branchId, workspaceId },
       relations: ['workspace', 'managerUser', 'createdBy'],

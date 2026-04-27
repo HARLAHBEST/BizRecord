@@ -2,12 +2,26 @@
 let syncWorkerActive = false;
 const BACKOFF_BASE_MS = 1500;
 const MAX_RETRIES = 5;
-const isLocalEntityId = (value) => typeof value === 'string' && value.startsWith('local_');
+const isLocalEntityId = (value) =>
+  typeof value === 'string' &&
+  (value.startsWith('local_') || value.startsWith('local-'));
 
 async function syncCoordinatorWorker({ token, currentWorkspaceId, currentBranchId }) {
   if (syncWorkerActive) return;
   syncWorkerActive = true;
   try {
+    let serverWorkspaceId = currentWorkspaceId;
+    if (isLocalEntityId(serverWorkspaceId)) {
+      const mappedWorkspaceId = await offlineStore.getServerId(
+        'workspace',
+        serverWorkspaceId,
+      );
+      if (!mappedWorkspaceId) {
+        return;
+      }
+      serverWorkspaceId = mappedWorkspaceId;
+    }
+
     const outboxRes = await offlineStore.getSyncOutboxActions();
     const rows = outboxRes?.rows || { length: 0 };
     for (let i = 0; i < rows.length; i++) {
@@ -28,7 +42,7 @@ async function syncCoordinatorWorker({ token, currentWorkspaceId, currentBranchI
       // `workspace_ref` stores the branch id for branch-scoped data, or the
       // workspace id itself for workspace-scoped inventory.
       let scopeId = action.workspace_ref;
-      if (scopeId && scopeId.startsWith('local_')) {
+      if (isLocalEntityId(scopeId)) {
         const mapped = await offlineStore.getServerId('workspace', scopeId);
         if (!mapped) {
           continue;
@@ -36,17 +50,17 @@ async function syncCoordinatorWorker({ token, currentWorkspaceId, currentBranchI
         scopeId = mapped;
       }
       const inventoryBasePath =
-        scopeId && String(scopeId) !== String(currentWorkspaceId)
-          ? `/workspaces/${currentWorkspaceId}/branches/${scopeId}/inventory`
-          : `/workspaces/${currentWorkspaceId}/inventory`;
+        scopeId && String(scopeId) !== String(serverWorkspaceId)
+          ? `/workspaces/${serverWorkspaceId}/branches/${scopeId}/inventory`
+          : `/workspaces/${serverWorkspaceId}/inventory`;
       const transactionsBasePath =
-        scopeId && String(scopeId) !== String(currentWorkspaceId)
-          ? `/workspaces/${currentWorkspaceId}/branches/${scopeId}/transactions`
-          : `/workspaces/${currentWorkspaceId}/transactions`;
+        scopeId && String(scopeId) !== String(serverWorkspaceId)
+          ? `/workspaces/${serverWorkspaceId}/branches/${scopeId}/transactions`
+          : `/workspaces/${serverWorkspaceId}/transactions`;
       const customersBasePath =
-        scopeId && String(scopeId) !== String(currentWorkspaceId)
-          ? `/workspaces/${currentWorkspaceId}/branches/${scopeId}/customers`
-          : `/workspaces/${currentWorkspaceId}/customers`;
+        scopeId && String(scopeId) !== String(serverWorkspaceId)
+          ? `/workspaces/${serverWorkspaceId}/branches/${scopeId}/customers`
+          : `/workspaces/${serverWorkspaceId}/customers`;
       try {
         const payload = action.payload ? JSON.parse(action.payload) : undefined;
         let apiRes = null;
@@ -823,7 +837,21 @@ export const WorkspaceProvider = function({ children }) {
     }
 
     try {
-      const data = await api.get(`/workspaces/${workspaceId}/branches`);
+      let resolvedWorkspaceId = workspaceId;
+      if (isLocalEntityId(workspaceId)) {
+        const mappedWorkspaceId = await offlineStore.getServerId(
+          'workspace',
+          workspaceId,
+        );
+        if (!mappedWorkspaceId) {
+          setBranches([]);
+          setCurrentBranchId(null);
+          return;
+        }
+        resolvedWorkspaceId = mappedWorkspaceId;
+      }
+
+      const data = await api.get(`/workspaces/${resolvedWorkspaceId}/branches`);
       const list = Array.isArray(data) ? data : [];
       setBranches(list);
       setCurrentBranchId((prev) => {
@@ -842,10 +870,22 @@ export const WorkspaceProvider = function({ children }) {
     if (!token || !workspaceId || !branchId) return;
 
     try {
+      let resolvedWorkspaceId = workspaceId;
+      if (isLocalEntityId(workspaceId)) {
+        const mappedWorkspaceId = await offlineStore.getServerId(
+          'workspace',
+          workspaceId,
+        );
+        if (!mappedWorkspaceId) {
+          return;
+        }
+        resolvedWorkspaceId = mappedWorkspaceId;
+      }
+
       const [inventory, transactions, customers] = await Promise.all([
-        api.get(`/workspaces/${workspaceId}/branches/${branchId}/inventory`).catch(() => null),
-        api.get(`/workspaces/${workspaceId}/branches/${branchId}/transactions`, { skip: 0, take: 500 }).catch(() => null),
-        api.get(`/workspaces/${workspaceId}/branches/${branchId}/customers`).catch(() => null),
+        api.get(`/workspaces/${resolvedWorkspaceId}/branches/${branchId}/inventory`).catch(() => null),
+        api.get(`/workspaces/${resolvedWorkspaceId}/branches/${branchId}/transactions`, { skip: 0, take: 500 }).catch(() => null),
+        api.get(`/workspaces/${resolvedWorkspaceId}/branches/${branchId}/customers`).catch(() => null),
       ]);
 
       if (Array.isArray(inventory)) {

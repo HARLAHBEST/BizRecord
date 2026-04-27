@@ -5,10 +5,18 @@ import {
   finishTransaction,
   getAvailablePurchases,
   initConnection,
+  purchaseErrorListener,
+  purchaseUpdatedListener,
   requestPurchase,
 } from 'react-native-iap';
 
 let connectionPromise = null;
+let purchaseUpdateSub = null;
+let purchaseErrorSub = null;
+
+export function extractPurchaseToken(purchase) {
+  return purchase?.purchaseToken || '';
+}
 
 export function isAvailable() {
   return Platform.OS === 'android';
@@ -20,29 +28,40 @@ async function ensureConnection() {
   }
 
   if (!connectionPromise) {
-    connectionPromise = initConnection().catch((error) => {
+    connectionPromise = initConnection().catch((err) => {
       connectionPromise = null;
-      throw error;
+      throw err;
     });
   }
 
   await connectionPromise;
 }
 
-function unwrapPurchase(result) {
-  if (Array.isArray(result)) {
-    return result[0] || null;
-  }
+export async function initPurchaseListeners(onSuccess, onError) {
+  await ensureConnection();
+  removeListeners();
 
-  if (Array.isArray(result?.purchases)) {
-    return result.purchases[0] || null;
-  }
+  purchaseUpdateSub = purchaseUpdatedListener(async (purchase) => {
+    console.log('Purchase update:', purchase);
 
-  if (result?.purchase) {
-    return result.purchase;
-  }
+    try {
+      await onSuccess(purchase);
+    } catch (err) {
+      console.error('Purchase handling failed:', err);
+    }
+  });
 
-  return result || null;
+  purchaseErrorSub = purchaseErrorListener((error) => {
+    console.error('Purchase error:', error);
+    if (onError) onError(error);
+  });
+}
+
+export function removeListeners() {
+  purchaseUpdateSub?.remove();
+  purchaseErrorSub?.remove();
+  purchaseUpdateSub = null;
+  purchaseErrorSub = null;
 }
 
 export async function getSkuDetails(productIds = []) {
@@ -78,37 +97,23 @@ export async function getProductDetails(productIds = [], productType = 'subs') {
 export async function purchaseSubscription(productId) {
   await ensureConnection();
 
-  const result = await requestPurchase({
+  await requestPurchase({
     request: {
       google: { skus: [productId] },
     },
     type: 'subs',
   });
-
-  const purchase = unwrapPurchase(result);
-  if (!purchase) {
-    throw new Error('Google Play did not return a purchase record.');
-  }
-
-  return purchase;
 }
 
 export async function purchaseProduct(productId) {
   await ensureConnection();
 
-  const result = await requestPurchase({
+  await requestPurchase({
     request: {
       google: { skus: [productId] },
     },
     type: 'in-app',
   });
-
-  const purchase = unwrapPurchase(result);
-  if (!purchase) {
-    throw new Error('Google Play did not return a purchase record.');
-  }
-
-  return purchase;
 }
 
 export async function restorePurchases() {
@@ -126,23 +131,28 @@ export async function acknowledgePurchase(purchase, options = {}) {
 }
 
 export async function disconnect() {
+  removeListeners();
+
   if (connectionPromise) {
     await connectionPromise.catch(() => null);
     connectionPromise = null;
   }
 
   if (isAvailable()) {
-    endConnection();
+    await endConnection();
   }
 }
 
 export default {
   acknowledgePurchase,
   disconnect,
+  extractPurchaseToken,
   getProductDetails,
   getSkuDetails,
+  initPurchaseListeners,
   isAvailable,
   purchaseProduct,
   purchaseSubscription,
+  removeListeners,
   restorePurchases,
 };

@@ -8,7 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { OAuth2Client } from 'google-auth-library';
 import { google } from 'googleapis';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { User } from '../auth/entities/user.entity';
 import { Payment } from './entities/payment.entity';
 import { Subscription } from './entities/subscription.entity';
@@ -68,6 +68,7 @@ export class BillingService {
   ]);
 
   constructor(
+    private readonly dataSource: DataSource,
     @InjectRepository(User)
     private usersRepository: Repository<User>,
     @InjectRepository(Workspace)
@@ -159,14 +160,17 @@ export class BillingService {
     };
   }
 
-  private async findOrCreateSubscription(user: User) {
-    let subscription = await this.subscriptionsRepository.findOne({
+  private async findOrCreateSubscriptionRecord(
+    subscriptionsRepository: Repository<Subscription>,
+    user: User,
+  ) {
+    let subscription = await subscriptionsRepository.findOne({
       where: { userId: user.id },
     });
 
     if (!subscription) {
       const plan: PlanKey = (user.plan as PlanKey) === 'pro' ? 'pro' : 'basic';
-      subscription = this.subscriptionsRepository.create({
+      subscription = subscriptionsRepository.create({
         userId: user.id,
         plan,
         status: 'expired',
@@ -179,10 +183,14 @@ export class BillingService {
         whatsappMessagesUsedThisMonth: 0,
         whatsappUsageResetAt: new Date(),
       });
-      subscription = await this.subscriptionsRepository.save(subscription);
+      subscription = await subscriptionsRepository.save(subscription);
     }
 
     return subscription;
+  }
+
+  private async findOrCreateSubscription(user: User) {
+    return this.findOrCreateSubscriptionRecord(this.subscriptionsRepository, user);
   }
 
   private resolveTrialState(user: User) {
@@ -268,6 +276,74 @@ export class BillingService {
       return 'addon_whatsapp_bundle_100';
     }
     return 'plan';
+  }
+
+  private buildGooglePaymentMetadata(
+    verifiedData: Record<string, any>,
+    extra: Record<string, unknown> = {},
+  ) {
+    return {
+      google: verifiedData,
+      ...extra,
+    };
+  }
+
+  private async getPaymentByReference(reference: string) {
+    return this.paymentsRepository.findOne({
+      where: { reference },
+    });
+  }
+
+  private async recordVerifiedGooglePayment(params: {
+    userId: string;
+    reference: string;
+    billingCycle: BillingCycle;
+    purchaseType: Payment['purchaseType'];
+    targetPlan: Payment['targetPlan'];
+    metadata: Record<string, unknown>;
+    rawResponse?: Record<string, unknown> | null;
+    addonWorkspaceSlots?: number;
+    addonStaffSeats?: number;
+    addonWhatsappBundles?: number;
+  }) {
+    let payment = await this.getPaymentByReference(params.reference);
+
+    if (payment && payment.userId !== params.userId) {
+      throw new ForbiddenException('Purchase token already belongs to another user');
+    }
+
+    const isFirstSuccess = !payment || payment.status !== 'success';
+
+    if (!payment) {
+      payment = this.paymentsRepository.create({
+        userId: params.userId,
+        reference: params.reference,
+        status: 'success',
+        amount: 0,
+        currency: 'NGN',
+        purchaseType: params.purchaseType,
+        billingCycle: params.billingCycle,
+        targetPlan: params.targetPlan,
+        addonWorkspaceSlots: params.addonWorkspaceSlots || 0,
+        addonStaffSeats: params.addonStaffSeats || 0,
+        addonWhatsappBundles: params.addonWhatsappBundles || 0,
+        metadata: params.metadata,
+        rawResponse: params.rawResponse || null,
+      });
+    } else {
+      payment.status = 'success';
+      payment.billingCycle = params.billingCycle;
+      payment.purchaseType = params.purchaseType;
+      payment.targetPlan = params.targetPlan;
+      payment.addonWorkspaceSlots = params.addonWorkspaceSlots || 0;
+      payment.addonStaffSeats = params.addonStaffSeats || 0;
+      payment.addonWhatsappBundles = params.addonWhatsappBundles || 0;
+      payment.metadata = params.metadata;
+      payment.rawResponse = params.rawResponse || payment.rawResponse || null;
+    }
+
+    payment = await this.paymentsRepository.save(payment);
+    return { payment, isFirstSuccess };
   }
 
   private toPlanKey(plan?: string | null): PlanKey {
@@ -408,69 +484,110 @@ export class BillingService {
     billingCycle: BillingCycle;
     verifiedData: Record<string, any>;
   }) {
-    const user = await this.usersRepository.findOne({ where: { id: params.userId } });
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
+    return this.dataSource.transaction(async (manager) => {
+      const usersRepository = manager.getRepository(User);
+      const subscriptionsRepository = manager.getRepository(Subscription);
+      const paymentsRepository = manager.getRepository(Payment);
 
-    const subscription = await this.findOrCreateSubscription(user);
-    if (subscription.status === 'trialing') {
-      throw new BadRequestException(
-        'Add-ons cannot be purchased during active trial',
+      let payment = await paymentsRepository.findOne({
+        where: { reference: params.purchaseToken },
+      });
+
+      if (payment?.userId && payment.userId !== params.userId) {
+        throw new ForbiddenException('Purchase token already belongs to another user');
+      }
+
+      if (payment?.status === 'success') {
+        const existingSubscription = await subscriptionsRepository.findOne({
+          where: { userId: params.userId },
+        });
+        return existingSubscription;
+      }
+
+      const user = await usersRepository.findOne({ where: { id: params.userId } });
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      const subscription = await this.findOrCreateSubscriptionRecord(
+        subscriptionsRepository,
+        user,
       );
-    }
-    if (subscription.plan !== 'pro') {
-      throw new BadRequestException('Add-ons are available only for Pro subscription');
-    }
+      if (subscription.status === 'trialing') {
+        throw new BadRequestException(
+          'Add-ons cannot be purchased during active trial',
+        );
+      }
+      if (subscription.plan !== 'pro') {
+        throw new BadRequestException(
+          'Add-ons are available only for Pro subscription',
+        );
+      }
 
-    if (params.purchaseKind === 'addon_workspace_slot') {
-      subscription.addonWorkspaceSlots = (subscription.addonWorkspaceSlots || 0) + 1;
-    } else if (params.purchaseKind === 'addon_staff_seat') {
-      subscription.addonStaffSeats = (subscription.addonStaffSeats || 0) + 1;
-    } else if (params.purchaseKind === 'addon_whatsapp_bundle_100') {
-      subscription.addonWhatsappBundles =
-        (subscription.addonWhatsappBundles || 0) + 1;
-    }
-
-    subscription.billingCycle = params.billingCycle;
-    subscription.lastPaymentReference = params.purchaseToken;
-    subscription.status = 'active';
-    subscription.metadata = {
-      ...(subscription.metadata || {}),
-      google: {
-        ...((subscription.metadata as any)?.google || {}),
-        lastAddonPurchase: {
-          productId: params.productId,
-          purchaseToken: params.purchaseToken,
-          purchaseKind: params.purchaseKind,
+      if (!payment) {
+        payment = paymentsRepository.create({
+          userId: user.id,
+          reference: params.purchaseToken,
+          status: 'pending',
+          amount: 0,
+          currency: 'NGN',
+          purchaseType: 'addon_purchase',
           billingCycle: params.billingCycle,
-          verifiedAt: new Date().toISOString(),
-          verifiedData: params.verifiedData,
-        },
-      },
-    };
-    await this.subscriptionsRepository.save(subscription);
+          targetPlan: subscription.plan,
+          addonWorkspaceSlots:
+            params.purchaseKind === 'addon_workspace_slot' ? 1 : 0,
+          addonStaffSeats: params.purchaseKind === 'addon_staff_seat' ? 1 : 0,
+          addonWhatsappBundles:
+            params.purchaseKind === 'addon_whatsapp_bundle_100' ? 1 : 0,
+          metadata: this.buildGooglePaymentMetadata(params.verifiedData, {
+            purchaseKind: params.purchaseKind,
+            productId: params.productId,
+          }),
+          rawResponse: params.verifiedData,
+        });
+        payment = await paymentsRepository.save(payment);
+      }
 
-    const payment = this.paymentsRepository.create({
-      userId: user.id,
-      reference: params.purchaseToken,
-      status: 'success',
-      amount: 0,
-      currency: 'NGN',
-      purchaseType: 'addon_purchase',
-      billingCycle: params.billingCycle,
-      targetPlan: subscription.plan,
-      addonWorkspaceSlots: params.purchaseKind === 'addon_workspace_slot' ? 1 : 0,
-      addonStaffSeats: params.purchaseKind === 'addon_staff_seat' ? 1 : 0,
-      addonWhatsappBundles:
-        params.purchaseKind === 'addon_whatsapp_bundle_100' ? 1 : 0,
-      metadata: {
-        google: params.verifiedData,
+      if (params.purchaseKind === 'addon_workspace_slot') {
+        subscription.addonWorkspaceSlots = (subscription.addonWorkspaceSlots || 0) + 1;
+      } else if (params.purchaseKind === 'addon_staff_seat') {
+        subscription.addonStaffSeats = (subscription.addonStaffSeats || 0) + 1;
+      } else if (params.purchaseKind === 'addon_whatsapp_bundle_100') {
+        subscription.addonWhatsappBundles =
+          (subscription.addonWhatsappBundles || 0) + 1;
+      }
+
+      subscription.billingCycle = params.billingCycle;
+      subscription.lastPaymentReference = params.purchaseToken;
+      subscription.status = 'active';
+      subscription.metadata = {
+        ...(subscription.metadata || {}),
+        google: {
+          ...((subscription.metadata as any)?.google || {}),
+          lastAddonPurchase: {
+            productId: params.productId,
+            purchaseToken: params.purchaseToken,
+            purchaseKind: params.purchaseKind,
+            billingCycle: params.billingCycle,
+            verifiedAt: new Date().toISOString(),
+            verifiedData: params.verifiedData,
+          },
+        },
+      };
+      await subscriptionsRepository.save(subscription);
+
+      payment.status = 'success';
+      payment.billingCycle = params.billingCycle;
+      payment.targetPlan = subscription.plan;
+      payment.metadata = this.buildGooglePaymentMetadata(params.verifiedData, {
         purchaseKind: params.purchaseKind,
         productId: params.productId,
-      },
+      });
+      payment.rawResponse = params.verifiedData;
+      await paymentsRepository.save(payment);
+
+      return subscription;
     });
-    await this.paymentsRepository.save(payment);
   }
 
   private mapGoogleNotificationStatus(notificationType?: number) {
@@ -555,6 +672,14 @@ export class BillingService {
     );
   }
 
+  private isMatchingGoogleSubscriptionProduct(
+    verifiedData: Record<string, any>,
+    productId: string,
+  ) {
+    const lineItem = this.getGoogleSubscriptionLineItem(verifiedData, productId);
+    return !!lineItem && lineItem.productId === productId;
+  }
+
   private async acknowledgeGoogleSubscriptionPurchase(
     packageName: string,
     productId: string,
@@ -564,6 +689,20 @@ export class BillingService {
     await androidpublisher.purchases.subscriptions.acknowledge({
       packageName,
       subscriptionId: productId,
+      token: purchaseToken,
+      requestBody: {},
+    } as any);
+  }
+
+  private async acknowledgeGoogleProductPurchase(
+    packageName: string,
+    productId: string,
+    purchaseToken: string,
+  ) {
+    const androidpublisher = await this.getAndroidPublisherClient();
+    await androidpublisher.purchases.products.acknowledge({
+      packageName,
+      productId,
       token: purchaseToken,
       requestBody: {},
     } as any);
@@ -664,11 +803,25 @@ export class BillingService {
     };
     await this.subscriptionsRepository.save(subscription);
 
+    const paymentRecord = await this.recordVerifiedGooglePayment({
+      userId: user.id,
+      reference: purchaseToken,
+      billingCycle: subscription.billingCycle || 'monthly',
+      purchaseType: 'plan_upgrade',
+      targetPlan: subscription.plan,
+      metadata: this.buildGooglePaymentMetadata(verifiedData, {
+        productId,
+        linkedPurchaseToken:
+          options?.linkedPurchaseToken || verifiedData?.linkedPurchaseToken || null,
+      }),
+      rawResponse: verifiedData,
+    });
+
     user.plan = subscription.plan;
     user.trialStatus = 'converted';
     await this.usersRepository.save(user);
 
-    if (options?.sendNotifications !== false) {
+    if (options?.sendNotifications !== false && paymentRecord.isFirstSuccess) {
       const amountText = 'Google Play';
       const html = this.emailTemplateService.paymentSuccess(
         user.plan,
@@ -870,6 +1023,11 @@ export class BillingService {
           pkg,
           token,
         );
+        if (!this.isMatchingGoogleSubscriptionProduct(verifiedData, productId)) {
+          throw new BadRequestException(
+            'Google Play subscription product does not match the requested productId',
+          );
+        }
         if (!this.isActiveGoogleSubscription(verifiedData)) {
           throw new BadRequestException(
             `Google Play subscription is not active: ${
@@ -905,25 +1063,31 @@ export class BillingService {
         productId,
         token,
       );
+      if (Number(productData?.purchaseState ?? 0) !== 0) {
+        throw new BadRequestException(
+          `Google Play product is not purchased: ${
+            productData?.purchaseState ?? 'UNKNOWN'
+          }`,
+        );
+      }
+      if (productData?.acknowledgementState === 0) {
+        await this.acknowledgeGoogleProductPurchase(pkg, productId, token);
+        productData.acknowledgementState = 1;
+      }
       if (purchaseKind === 'plan') {
-        try {
-          const user = await this.usersRepository.findOne({ where: { id: userId } });
-          if (user) {
-            const payment = this.paymentsRepository.create({
-              userId: user.id,
-              reference: token,
-              status: 'success',
-              amount: 0,
-              currency: 'NGN',
-              purchaseType: 'one_time',
-              billingCycle: 'monthly',
-              targetPlan: 'basic',
-              metadata: { google: productData },
-            });
-            await this.paymentsRepository.save(payment);
-          }
-        } catch {
-          // ignore non-fatal persistence errors for one-time Google products
+        const user = await this.usersRepository.findOne({ where: { id: userId } });
+        if (user) {
+          await this.recordVerifiedGooglePayment({
+            userId: user.id,
+            reference: token,
+            billingCycle: 'monthly',
+            purchaseType: 'one_time',
+            targetPlan: 'basic',
+            metadata: this.buildGooglePaymentMetadata(productData, {
+              productId,
+            }),
+            rawResponse: productData,
+          });
         }
       } else {
         await this.applyVerifiedAddonPurchase({
