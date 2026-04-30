@@ -58,6 +58,46 @@ export class InitialSchema1710417600000 implements MigrationInterface {
     `);
 
     await queryRunner.query(`
+      CREATE TABLE IF NOT EXISTS "branches" (
+        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
+        "name" character varying NOT NULL,
+        "description" character varying,
+        "location" character varying,
+        "address" character varying,
+        "phone" character varying,
+        "status" character varying NOT NULL DEFAULT 'active',
+        "workspace_id" uuid NOT NULL,
+        "manager_user_id" uuid,
+        "created_by" uuid NOT NULL,
+        "createdAt" TIMESTAMP NOT NULL DEFAULT now(),
+        "updatedAt" TIMESTAMP NOT NULL DEFAULT now(),
+        CONSTRAINT "PK_branches_id" PRIMARY KEY ("id"),
+        CONSTRAINT "FK_branches_workspace" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE ON UPDATE NO ACTION,
+        CONSTRAINT "FK_branches_manager_user" FOREIGN KEY ("manager_user_id") REFERENCES "users"("id") ON DELETE NO ACTION ON UPDATE NO ACTION,
+        CONSTRAINT "FK_branches_created_by" FOREIGN KEY ("created_by") REFERENCES "users"("id") ON DELETE NO ACTION ON UPDATE NO ACTION
+      )
+    `);
+
+    await queryRunner.query(`
+      CREATE TABLE IF NOT EXISTS "branch_users" (
+        "user_id" uuid NOT NULL,
+        "branch_id" uuid NOT NULL,
+        "role" character varying NOT NULL DEFAULT 'staff',
+        "permissions" jsonb,
+        "is_active" boolean NOT NULL DEFAULT true,
+        "created_at" TIMESTAMP NOT NULL DEFAULT now(),
+        "updated_at" TIMESTAMP NOT NULL DEFAULT now(),
+        CONSTRAINT "PK_branch_users" PRIMARY KEY ("user_id", "branch_id"),
+        CONSTRAINT "FK_branch_users_user" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE NO ACTION,
+        CONSTRAINT "FK_branch_users_branch" FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON DELETE CASCADE ON UPDATE NO ACTION
+      )
+    `);
+
+    await queryRunner.query(`
+      CREATE INDEX IF NOT EXISTS "IDX_branch_users_branch_id" ON "branch_users" ("branch_id")
+    `);
+
+    await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "inventory_items" (
         "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
         "name" character varying NOT NULL,
@@ -137,6 +177,11 @@ export class InitialSchema1710417600000 implements MigrationInterface {
     await queryRunner.query('DROP TYPE IF EXISTS "transactions_type_enum"');
 
     await queryRunner.query('DROP TABLE IF EXISTS "inventory_items"');
+    await queryRunner.query(
+      'DROP INDEX IF EXISTS "IDX_branch_users_branch_id"',
+    );
+    await queryRunner.query('DROP TABLE IF EXISTS "branch_users"');
+    await queryRunner.query('DROP TABLE IF EXISTS "branches"');
 
     await queryRunner.query(
       'DROP INDEX IF EXISTS "IDX_workspace_users_workspace_id"',
