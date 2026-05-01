@@ -92,11 +92,11 @@ export class CustomerService {
     await this.assertCustomerScope(workspaceId, branchId, userId, 'customers.view');
     const qb = this.customerRepository
       .createQueryBuilder('customer')
-      .where('customer.workspaceId = :workspaceId', { workspaceId });
+      .where('customer.workspace_id = :workspaceId', { workspaceId });
     if (branchId) {
-      qb.andWhere('customer.branchId = :branchId', { branchId });
+      qb.andWhere('customer.branch_id = :branchId', { branchId });
     } else {
-      qb.andWhere('customer.branchId IS NULL');
+      qb.andWhere('customer.branch_id IS NULL');
     }
     if (search) {
       qb.andWhere(

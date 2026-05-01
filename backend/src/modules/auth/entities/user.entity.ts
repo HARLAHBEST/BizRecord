@@ -72,9 +72,9 @@ export class User {
   @OneToMany(() => UserPushToken, (pushToken) => pushToken.user)
   pushTokens: UserPushToken[];
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'createdAt' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ name: 'updatedAt' })
   updatedAt: Date;
 }

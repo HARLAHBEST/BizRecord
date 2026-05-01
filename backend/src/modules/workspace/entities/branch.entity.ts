@@ -70,9 +70,9 @@ export class Branch {
   @OneToMany(() => Customer, (customer) => customer.branch)
   customers: Customer[];
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'createdAt' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ name: 'updatedAt' })
   updatedAt: Date;
 }

@@ -69,9 +69,9 @@ export class Workspace {
   @OneToMany(() => Transaction, (transaction) => transaction.workspace)
   transactions: Transaction[];
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'createdAt' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ name: 'updatedAt' })
   updatedAt: Date;
 }
