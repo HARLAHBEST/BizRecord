@@ -9,7 +9,6 @@ import { Card, Title, Subtle, SkeletonBlock, EmptyState, AppButton } from '../co
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 import { MaterialIcons } from '@expo/vector-icons';
-import UpgradeModal from '../components/UpgradeModal';
 
 const isPendingSyncStatus = (status) => {
   const value = String(status || '').toLowerCase();
@@ -58,12 +57,6 @@ export default function DashboardScreen({ navigation }) {
   const themeContext = useTheme();
   const theme = themeContext.theme;
   const { user } = useAuth();
-  const [showRenewalModal, setShowRenewalModal] = useState(false);
-  useEffect(() => {
-    if (user?.upgradeRequired) {
-      setShowRenewalModal(true);
-    }
-  }, [user]);
   const workspace = useWorkspace();
   const { width } = useWindowDimensions();
   const compact = width < 390;
@@ -216,21 +209,6 @@ export default function DashboardScreen({ navigation }) {
 
   return (
     <>
-      {showRenewalModal && (
-        <UpgradeModal
-          visible={showRenewalModal}
-          onClose={() => setShowRenewalModal(false)}
-          onUpgrade={() => {
-            setShowRenewalModal(false);
-            navigation.navigate('Subscription');
-          }}
-          title="Renewal required"
-          message="Your subscription has expired or requires renewal. Please upgrade your plan to continue."
-          plan={user?.plan}
-          limit={null}
-          current={null}
-        />
-      )}
       <ScrollView
         style={[styles.container, { backgroundColor: theme.colors.background }]}
         contentContainerStyle={{ alignItems: 'center', paddingHorizontal: compact ? 10 : 16, paddingVertical: 12 }}
@@ -459,5 +437,4 @@ const styles = StyleSheet.create({
     elevation: 1,
   }
 });
-
 

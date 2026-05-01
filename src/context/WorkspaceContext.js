@@ -451,22 +451,6 @@ export const WorkspaceProvider = function({ children }) {
       return;
     }
 
-    // If we have a cached billing snapshot for this workspace and it is
-    // inactive/expired, block new writes even while offline.
-    try {
-      const billingCtx = await offlineStore.getCachedBillingContext(route.workspaceId);
-      if (billingCtx && billingCtx.isActive === false) {
-        throw new Error(
-          'This workspace subscription is inactive or expired. Renew your plan to add new inventory, sales, or debts.',
-        );
-      }
-    } catch (err) {
-      if (err instanceof Error) {
-        throw err;
-      }
-      // ignore cache errors and continue
-    }
-
     const workspaceRef = String(route.scopeId);
     const now = Date.now();
 
@@ -742,7 +726,7 @@ export const WorkspaceProvider = function({ children }) {
     return branches.find((item) => String(item.id) === String(currentBranchId)) || branches[0] || null;
   }, [branches, currentBranchId]);
 
-  const workspaceAccessBlocked = !!currentWorkspace && String(currentWorkspace?.status || 'active').toLowerCase() !== 'active';
+  const workspaceAccessBlocked = false;
 
   const clearPersistedWorkspaceSelections = useCallback(async () => {
     try {

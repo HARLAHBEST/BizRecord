@@ -13,14 +13,12 @@ import { ReceiptService } from './receipt.service';
 import { WorkspaceModule } from '../workspace/workspace.module';
 import { Branch } from '../workspace/entities/branch.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
-import { BillingModule } from '../billing/billing.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Transaction, Workspace, User, InventoryItem, Branch]),
     WorkspaceModule,
     NotificationsModule,
-    BillingModule,
   ],
   providers: [TransactionsService, ReceiptService],
   controllers: [TransactionsController, WorkspaceTransactionsController],

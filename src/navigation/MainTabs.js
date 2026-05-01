@@ -11,6 +11,7 @@ import SalesScreen from '../screens/SalesScreen';
 import DebtScreen from '../screens/DebtScreen';
 import ReportsScreen from '../screens/ReportsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import SubscriptionScreen from '../screens/billing/SubscriptionScreen';
 import RecordSaleScreen from '../screens/RecordSaleScreen';
 import RecordExpenseScreen from '../screens/RecordExpenseScreen';
 import RecordDebtScreen from '../screens/RecordDebtScreen';
@@ -21,7 +22,6 @@ import AuditLogScreen from '../screens/admin/AuditLogScreen';
 import StockTransferScreen from '../screens/admin/StockTransferScreen';
 import WorkspaceSetupScreen from '../screens/workspace/WorkspaceSetupScreen';
 import WorkspaceInvitesScreen from '../screens/workspace/WorkspaceInvitesScreen';
-import SubscriptionScreen from '../screens/billing/SubscriptionScreen';
 import TeamManagementScreen from '../screens/TeamManagementScreen';
 import { useTheme } from '../theme/ThemeContext';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -137,12 +137,12 @@ export default function MainTabs() {
       <Stack.Screen name="TeamManagement" component={TeamManagementScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="CreateWorkspace" component={WorkspaceSetupScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="JoinWorkspace" component={WorkspaceInvitesScreen} options={{ presentation: 'modal' }} />
-      <Stack.Screen name="Subscription" component={SubscriptionScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="EditItem" component={EditItemScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="Settings" component={SettingsScreen} options={{ presentation: 'modal' }} />
       <Stack.Screen name="CustomerListScreen" component={require('../screens/CustomerListScreen').default} options={{ presentation: 'modal', title: 'Customers' }} />
       <Stack.Screen name="AddCustomerScreen" component={require('../screens/AddCustomerScreen').default} options={{ presentation: 'modal', title: 'Add Customer' }} />
       <Stack.Screen name="EditCustomerScreen" component={require('../screens/EditCustomerScreen').default} options={{ presentation: 'modal', title: 'Edit Customer' }} />
+      <Stack.Screen name="Subscription" component={SubscriptionScreen} options={{ presentation: 'modal' }} />
     </Stack.Navigator>
   );
 }

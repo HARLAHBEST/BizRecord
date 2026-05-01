@@ -18,24 +18,16 @@ import { useWorkspace } from '../../context/WorkspaceContext';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../api/client';
 import * as offlineStore from '../../storage/offlineStore';
-import UpgradeModal from '../../components/UpgradeModal';
 
 export default function WorkspaceSetupScreen({ navigation }) {
   const { theme } = useTheme();
   const { setWorkspaces, setCurrentWorkspaceId, refreshWorkspaces } = useWorkspace();
   const { logout, user } = useAuth();
-  const [showRenewalModal, setShowRenewalModal] = useState(false);
   const [pendingInvites, setPendingInvites] = useState([]);
   const [inviteCodes, setInviteCodes] = useState({});
   const [inviteLoading, setInviteLoading] = useState(false);
   const [acceptingInviteId, setAcceptingInviteId] = useState(null);
   const [activeMode, setActiveMode] = useState('create');
-
-  React.useEffect(() => {
-    if (user?.upgradeRequired) {
-      setShowRenewalModal(true);
-    }
-  }, [user]);
 
   const { width } = useWindowDimensions();
   const isModal = navigation && navigation.canGoBack();
@@ -43,8 +35,6 @@ export default function WorkspaceSetupScreen({ navigation }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-  const [upgradePayload, setUpgradePayload] = useState(null);
   const [skeleton, setSkeleton] = useState(true);
 
   const compact = width < 380;
@@ -80,11 +70,6 @@ export default function WorkspaceSetupScreen({ navigation }) {
     }
   }, [pendingInvites.length]);
 
-  const openUpgradeModal = (payload) => {
-    setUpgradePayload(payload || null);
-    setShowUpgradeModal(true);
-  };
-
   const handleCreateWorkspace = async () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
@@ -114,30 +99,6 @@ export default function WorkspaceSetupScreen({ navigation }) {
         if (isModal) navigation.goBack();
         return;
       } catch (err) {
-        // Check for business logic errors that should NOT create locally
-        const status = err?.response?.status || err?.data?.statusCode;
-        const errorCode = err?.data?.code;
-        const isBusinessError = status === 403 || status === 400;
-        
-        if (isBusinessError) {
-          // Don't create locally for business logic errors
-          if (errorCode === 'SUBSCRIPTION_REQUIRED') {
-            Alert.alert(
-              'Subscription Required',
-              'You need an active subscription to create a workspace. Please select and purchase a plan.',
-              [{ text: 'OK', onPress: () => openUpgradeModal() }]
-            );
-            return;
-          }
-          if (errorCode === 'PLAN_LIMIT_REACHED') {
-            openUpgradeModal(err.data);
-            return;
-          }
-          // Generic business error
-          Alert.alert('Unable to create workspace', err?.message || 'Please check your input and try again.');
-          return;
-        }
-        
         // For true network errors only (no response or timeout), create locally
         const isNetworkError = !err?.response && (/network|offline|timeout|fetch/i.test(String(err?.message || '')));
         if (!isNetworkError) {
@@ -233,21 +194,6 @@ export default function WorkspaceSetupScreen({ navigation }) {
 
   return (
     <>
-      {showRenewalModal && (
-        <UpgradeModal
-          visible={showRenewalModal}
-          onClose={() => setShowRenewalModal(false)}
-          onUpgrade={() => {
-            setShowRenewalModal(false);
-            navigation.navigate('Subscription');
-          }}
-          title="Renewal required"
-          message="Your subscription has expired or requires renewal. Please upgrade your plan to continue."
-          plan={user?.plan}
-          limit={null}
-          current={null}
-        />
-      )}
       <KeyboardAvoidingView
         style={[styles.container, { backgroundColor: theme.colors.background }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -453,19 +399,6 @@ export default function WorkspaceSetupScreen({ navigation }) {
           </Card>
         </ScrollView>
 
-        <UpgradeModal
-          visible={showUpgradeModal}
-          onClose={() => setShowUpgradeModal(false)}
-          onUpgrade={() => {
-            setShowUpgradeModal(false);
-            navigation.navigate('Subscription');
-          }}
-          title="Workspace limit reached"
-          message={upgradePayload?.message || 'Your current plan workspace limit has been reached. Upgrade to continue.'}
-          plan={upgradePayload?.meta?.plan || user?.plan}
-          limit={upgradePayload?.meta?.limit}
-          current={upgradePayload?.meta?.current}
-        />
       </KeyboardAvoidingView>
     </>
   );

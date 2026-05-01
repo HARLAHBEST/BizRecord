@@ -13,7 +13,6 @@ import { InventoryItem } from '../inventory/entities/inventory-item.entity';
 import { Branch } from '../workspace/entities/branch.entity';
 import { BranchAccessService } from '../workspace/branch-access.service';
 import { AuditLogService } from '../workspace/audit-log.service';
-import { BillingService } from '../billing/billing.service';
 
 import { ReceiptService } from './receipt.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
@@ -38,7 +37,6 @@ export class TransactionsService {
     private readonly emailTemplateService: EmailTemplateService,
     private readonly branchAccessService: BranchAccessService,
     private readonly auditLogService: AuditLogService,
-    private readonly billingService: BillingService,
   ) {}
 
   private async assertTransactionScope(
@@ -93,15 +91,6 @@ export class TransactionsService {
         : normalizedType === 'debt'
           ? 'debts.manage'
           : 'inventory.manage';
-
-    await this.billingService.assertWorkspaceActive(
-      workspaceId,
-      normalizedType === 'debt'
-        ? 'transaction.debt.create'
-        : normalizedType === 'sale'
-          ? 'transaction.sale.create'
-          : 'transaction.other.create',
-    );
 
     const { branch, user, workspace } = await this.assertTransactionScope(
       workspaceId,
@@ -411,11 +400,6 @@ export class TransactionsService {
     status: 'pending' | 'completed' | 'cancelled',
     userId: string,
   ) {
-    await this.billingService.assertWorkspaceActive(
-      workspaceId,
-      'transaction.debt.update_status',
-    );
-
     await this.assertTransactionScope(
       workspaceId,
       branchId,

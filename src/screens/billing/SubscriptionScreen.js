@@ -531,118 +531,17 @@ export default function SubscriptionScreen({ navigation }) {
   };
 
   const startCheckout = async () => {
-    if (!isWorkspaceOwner) {
-      Alert.alert(
-        'Permission required',
-        'Only workspace owners can purchase or upgrade subscriptions for this workspace.',
-      );
-      return;
-    }
-    if (onlineRequired) {
-      Alert.alert(
-        'Internet required',
-        'Billing requires internet connection. Come online to upgrade or renew this workspace.',
-      );
-      return;
-    }
-
-    if (Platform.OS === 'android' && GoogleBilling.isAvailable()) {
-      const packageName = getAndroidPackageName();
-      if (!packageName) {
-        Alert.alert(
-          'Billing configuration error',
-          'Android package name is missing. Set EXPO_PUBLIC_ANDROID_PACKAGE before building for production.',
-        );
-        return;
-      }
-
-      try {
-        setProcessing(true);
-        // Pause auto-lock while redirecting to Google Play for payment
-        setPauseAutoLock(true);
-        const subscriptionSku = resolveSubscriptionSku(selectedPlan, billingCycle);
-        const shouldPurchasePlan =
-          !subscription?.plan ||
-          subscription?.status !== 'active' ||
-          subscription?.plan !== selectedPlan ||
-          (subscription?.billingCycle || 'monthly') !== billingCycle;
-
-        if (shouldPurchasePlan) {
-          await GoogleBilling.purchaseSubscription(subscriptionSku);
-          // FIRE AND FORGET. Listener will handle the rest.
-        } else {
-          Alert.alert('Already subscribed', 'You already have this plan.');
-        }
-      } catch (err) {
-        Alert.alert('Google Billing', err?.message || 'Purchase failed');
-      } finally {
-        setProcessing(false);
-        // Re-enable auto-lock after payment flow completes
-        setPauseAutoLock(false);
-      }
-      return;
-    }
-
     Alert.alert(
-      'Unsupported platform',
-      'Google Play Billing is only available in the Android app. Use an Android build from EAS or the Play Store to purchase subscriptions.',
+      'Free Testing Mode',
+      'Billing is disabled for early testing. All features are available to everyone.'
     );
   };
 
   const startAddonCheckout = async () => {
-    if (!isWorkspaceOwner) {
-      Alert.alert('Permission required', 'Only workspace owners can purchase add-ons.');
-      return;
-    }
-    if (onlineRequired) {
-      Alert.alert('Internet required', 'Connect to the internet to purchase add-ons.');
-      return;
-    }
-
-    const selectedAddonsList = Object.entries(selectedAddons)
-      .filter(([, selected]) => selected)
-      .map(([key]) => key);
-
-    if (selectedAddonsList.length === 0) {
-      Alert.alert('No add-ons selected', 'Select at least one add-on to proceed.');
-      return;
-    }
-
-    if (Platform.OS === 'android' && GoogleBilling.isAvailable()) {
-      const packageName = getAndroidPackageName();
-      if (!packageName) {
-        Alert.alert('Billing configuration error', 'Android package name is missing.');
-        return;
-      }
-
-      try {
-        setProcessingAddon(true);
-        // Pause auto-lock while redirecting to Google Play for addon purchases
-        setPauseAutoLock(true);
-        
-        for (const addonKey of selectedAddonsList) {
-          const addonSku = resolveAddonSku(addonKey, billingCycle);
-          if (!addonSku) {
-            throw new Error(`Missing Google Play SKU for ${addonKey}.`);
-          }
-
-          // FIRE AND FORGET. Listener will handle verification
-          await GoogleBilling.purchaseProduct(addonSku);
-        }
-
-        setShowAddonModal(false);
-        setSelectedAddons({ workspaceSlot: false, staffSeat: false, whatsappBundle: false });
-      } catch (err) {
-        Alert.alert('Add-on purchase failed', err?.message || 'Please try again.');
-      } finally {
-        setProcessingAddon(false);
-        // Re-enable auto-lock after addon payment flow completes
-        setPauseAutoLock(false);
-      }
-      return;
-    }
-
-    Alert.alert('Unsupported platform', 'Google Play Billing is only available on Android.');
+    Alert.alert(
+      'Free Testing Mode',
+      'Billing is disabled for early testing. All features are available to everyone.'
+    );
   };
 
   const verifyPayment = async () => {

@@ -5,7 +5,6 @@ import { WorkspaceController } from './workspace.controller';
 import { Workspace } from './entities/workspace.entity';
 import { User } from '../auth/entities/user.entity';
 import { WorkspaceInvite } from './entities/invite.entity';
-import { BillingModule } from '../billing/billing.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { Transaction } from '../transactions/entities/transaction.entity';
 import { InventoryItem } from '../inventory/entities/inventory-item.entity';
@@ -31,7 +30,6 @@ import { AuditLogService } from './audit-log.service';
       InventoryItem,
       Customer,
     ]),
-    BillingModule,
     NotificationsModule,
   ],
   providers: [WorkspaceService, BranchAccessService, AuditLogService],

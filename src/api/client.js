@@ -4,7 +4,6 @@ import {
   getCachedTransactions,
   getCachedCustomers,
   getOfflineWorkspacesForUi,
-  getCachedBillingContext,
 } from '../storage/offlineStore';
 
 // Multi-environment configuration
@@ -71,14 +70,6 @@ const isLikelyOfflineError = (err) => !err?.response;
 const buildOfflineFallback = async (path, query) => {
   if (path === '/workspaces') {
     return getOfflineWorkspacesForUi();
-  }
-
-  const billingWorkspaceMatch = path.match(
-    /^\/billing\/workspaces\/([^/]+)\/context$/,
-  );
-  if (billingWorkspaceMatch) {
-    const workspaceId = billingWorkspaceMatch[1];
-    return getCachedBillingContext(workspaceId);
   }
 
   const inventoryMatch = path.match(

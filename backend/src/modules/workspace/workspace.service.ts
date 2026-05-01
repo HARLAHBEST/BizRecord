@@ -9,7 +9,6 @@ import { Repository } from 'typeorm';
 import { Workspace } from './entities/workspace.entity';
 import { User } from '../auth/entities/user.entity';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
-import { BillingService } from '../billing/billing.service';
 import { WorkspaceInvite } from './entities/invite.entity';
 import { EmailQueueService } from '../notifications/email-queue.service';
 import { EmailService } from '../notifications/email.service';
@@ -55,7 +54,6 @@ export class WorkspaceService {
     private customersRepository: Repository<Customer>,
     @InjectRepository(AuditLog)
     private auditLogsRepository: Repository<AuditLog>,
-    private billingService: BillingService,
     private readonly emailQueueService: EmailQueueService,
     private readonly emailService: EmailService,
     private readonly emailTemplateService: EmailTemplateService,
@@ -249,54 +247,7 @@ export class WorkspaceService {
       throw new NotFoundException('User not found');
     }
 
-    const subscription = await this.billingService.getCurrentSubscription(
-      userId,
-    );
-    const usage = await this.billingService.getUsage(userId);
-    const normalizedPlan: 'basic' | 'pro' = subscription?.plan === 'pro' ? 'pro' : 'basic';
-    const planLimit = usage?.limits?.workspaceLimit ?? (normalizedPlan === 'basic' ? 1 : 3);
-    // Count current top-level workspaces for this user via memberships
-    const memberships = await this.membershipsRepository.find({
-      where: { userId, isActive: true },
-      relations: ['workspace'],
-    });
-    const currentWorkspaceCount = memberships.filter(
-      (m) => !m.workspace.parentWorkspaceId,
-    ).length;
-
-    const isActiveSubscription =
-      subscription &&
-      (subscription.status === 'active' || subscription.status === 'trialing');
-
-    if (!isActiveSubscription) {
-      throw new ForbiddenException({
-        statusCode: 403,
-        code: 'SUBSCRIPTION_REQUIRED',
-        message:
-          'An active subscription is required to create a workspace. Purchase or renew a plan in Billing.',
-        meta: {
-          plan: normalizedPlan,
-          feature: 'workspace.create',
-        },
-      });
-    }
-
-    if (currentWorkspaceCount >= planLimit) {
-      throw new ForbiddenException({
-        statusCode: 403,
-        code: 'PLAN_LIMIT_REACHED',
-        message:
-          normalizedPlan === 'basic'
-            ? 'Your Basic plan allows only 1 workspace. Upgrade your plan to add more.'
-            : 'Your Pro plan allows up to 3 workspaces. Upgrade your plan to increase this limit.',
-        meta: {
-          plan: normalizedPlan,
-          limit: planLimit,
-          current: currentWorkspaceCount,
-          feature: 'workspace.create',
-        },
-      });
-    }
+    // Free early-testing mode: workspace creation is not gated by plan state.
 
     if (createWorkspaceDto.parentWorkspaceId) {
       throw new BadRequestException(

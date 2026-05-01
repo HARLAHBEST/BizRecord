@@ -12,7 +12,6 @@ import { User } from '../auth/entities/user.entity';
 import { Transaction } from '../transactions/entities/transaction.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { WorkspaceModule } from '../workspace/workspace.module';
-import { BillingModule } from '../billing/billing.module';
 import { Branch } from '../workspace/entities/branch.entity';
 import { StockTransfer } from './entities/stock-transfer.entity';
 
@@ -21,7 +20,6 @@ import { StockTransfer } from './entities/stock-transfer.entity';
     TypeOrmModule.forFeature([InventoryItem, Workspace, User, Transaction, Branch, StockTransfer]),
     NotificationsModule,
     WorkspaceModule,
-    BillingModule,
   ],
   providers: [InventoryService],
   controllers: [

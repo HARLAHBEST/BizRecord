@@ -16,7 +16,6 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme/ThemeContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useAuth } from '../context/AuthContext';
-import UpgradeModal from '../components/UpgradeModal';
 import { api } from '../api/client';
 
 const SettingsScreen = function({ navigation }) {
@@ -28,51 +27,23 @@ const SettingsScreen = function({ navigation }) {
 
   const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
   const [showBranchModal, setShowBranchModal] = useState(false);
-  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-  const [upgradePayload, setUpgradePayload] = useState(null);
   const [pendingInviteCount, setPendingInviteCount] = useState(0);
   const [pendingInviteUnavailable, setPendingInviteUnavailable] = useState(false);
 
   const currentWorkspace = workspace.currentWorkspace || workspace.workspaces.find((w) => w.id === workspace.currentWorkspaceId);
   const currentBranch = workspace.currentBranch || workspace.branches?.find((b) => b.id === workspace.currentBranchId);
-  const workspaceAccessBlocked = !!currentWorkspace && String(currentWorkspace?.status || 'active').toLowerCase() !== 'active';
   const userRole = currentWorkspace?.role || user?.role || 'user';
   const isWorkspaceOwner = userRole === 'owner';
-  const canManageWorkspace = !workspaceAccessBlocked && (userRole === 'owner' || userRole === 'manager');
-  const normalizedPlan = user?.plan === 'pro' ? 'pro' : 'basic';
-  const planLimit = normalizedPlan === 'pro' ? 3 : 1;
+  const canManageWorkspace = userRole === 'owner' || userRole === 'manager';
   const ownedWorkspacesCount = (workspace.workspaces || []).filter(
     (item) => String(item?.role || '').toLowerCase() === 'owner',
   ).length;
-  const trialDaysLeft = user?.trialEndsAt
-    ? Math.max(0, Math.ceil((new Date(user.trialEndsAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
-    : 0;
   const contentWidth = Math.min(width - 32, 760);
   const horizontalPadding = width < 380 ? 12 : 16;
   const titleSize = width < 380 ? 24 : 28;
   const subtitleSize = width < 380 ? 14 : 16;
 
-  const openUpgradeModal = (feature) => {
-    setUpgradePayload({
-      message:
-        normalizedPlan === 'basic'
-          ? 'Your Basic plan allows only 1 workspace. Upgrade to create more workspaces and branches.'
-          : 'You have reached your Pro plan workspace limit. Upgrade to continue creating more workspaces and branches.',
-      meta: {
-        plan: normalizedPlan,
-        limit: planLimit,
-        current: ownedWorkspacesCount,
-        feature,
-      },
-    });
-    setShowUpgradeModal(true);
-  };
-
   const handleCreateWorkspace = () => {
-    if (ownedWorkspacesCount >= planLimit) {
-      openUpgradeModal('workspace.create');
-      return;
-    }
     navigation.navigate('CreateWorkspace');
   };
 
@@ -135,29 +106,6 @@ const SettingsScreen = function({ navigation }) {
       </View>
 
       <View style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}>
-        {workspaceAccessBlocked ? (
-          <View style={styles.settingItem}>
-            <View style={styles.settingInfo}>
-              <MaterialIcons name="lock-clock" size={24} color={theme.colors.warning} />
-              <View style={styles.settingText}>
-                <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Workspace access paused</Text>
-                <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
-                  {currentWorkspace?.name || 'This workspace'} is {String(currentWorkspace?.status || 'inactive').replace(/_/g, ' ')}. Come online and renew billing to continue using protected business screens.
-                </Text>
-              </View>
-            </View>
-            <TouchableOpacity onPress={() => {
-              if (!isWorkspaceOwner) {
-                Alert.alert('Permission required', 'Only workspace owners can manage subscriptions.');
-                return;
-              }
-              navigation.navigate('Subscription');
-            }}>
-              <MaterialIcons name="chevron-right" size={24} color={theme.colors.primary} />
-            </TouchableOpacity>
-          </View>
-        ) : null}
-
         <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
             <MaterialIcons name="palette" size={24} color={theme.colors.primary} />
@@ -203,28 +151,6 @@ const SettingsScreen = function({ navigation }) {
       </View>
 
       <View style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}>
-        <View style={styles.settingItem}>
-          <View style={styles.settingInfo}>
-            <MaterialIcons name="workspace-premium" size={24} color={theme.colors.primary} />
-            <View style={styles.settingText}>
-              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Current Plan</Text>
-              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
-                {normalizedPlan.toUpperCase()} • {ownedWorkspacesCount}/{planLimit} owned workspaces
-                {user?.trialStatus === 'active' ? ` • Trial: ${trialDaysLeft} day${trialDaysLeft === 1 ? '' : 's'} left` : ''}
-              </Text>
-            </View>
-          </View>
-          <TouchableOpacity onPress={() => {
-            if (!isWorkspaceOwner) {
-              Alert.alert('Permission required', 'Only workspace owners can upgrade the workspace plan.');
-              return;
-            }
-            openUpgradeModal('plan.view');
-          }}>
-            <MaterialIcons name="arrow-upward" size={24} color={theme.colors.primary} />
-          </TouchableOpacity>
-        </View>
-
         <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
             <MaterialIcons name="business" size={24} color={theme.colors.primary} />
@@ -315,16 +241,12 @@ const SettingsScreen = function({ navigation }) {
             <View style={styles.settingText}>
               <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Team Management</Text>
               <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
-                {workspaceAccessBlocked ? 'Unavailable until this workspace billing is renewed online' : 'Invite and manage workspace team members'}
+                Invite and manage workspace team members
               </Text>
             </View>
           </View>
           <TouchableOpacity
             onPress={() => {
-              if (!canManageWorkspace && workspaceAccessBlocked) {
-                Alert.alert('Billing required', 'This workspace is not active. Come online and renew billing to manage team access.');
-                return;
-              }
               if (canManageWorkspace) {
                 navigation.navigate('TeamManagement');
               }
@@ -341,16 +263,12 @@ const SettingsScreen = function({ navigation }) {
             <View style={styles.settingText}>
               <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Branch Management</Text>
               <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
-                {workspaceAccessBlocked ? 'Unavailable until this workspace billing is renewed online' : 'View branch performance, managers and branch staffing'}
+                View branch performance, managers and branch staffing
               </Text>
             </View>
           </View>
           <TouchableOpacity
             onPress={() => {
-              if (!canManageWorkspace && workspaceAccessBlocked) {
-                Alert.alert('Billing required', 'This workspace is not active. Come online and renew billing to manage branches.');
-                return;
-              }
               if (canManageWorkspace) {
                 navigation.push('BranchList');
               }
@@ -522,20 +440,6 @@ const SettingsScreen = function({ navigation }) {
           <Text style={[styles.logoutText, { color: theme.colors.primary }]}>Sign out</Text>
         </TouchableOpacity>
       </View>
-
-      <UpgradeModal
-        visible={showUpgradeModal}
-        onClose={() => setShowUpgradeModal(false)}
-        onUpgrade={() => {
-          setShowUpgradeModal(false);
-          navigation.navigate('Subscription');
-        }}
-        title="Upgrade required"
-        message={upgradePayload?.message}
-        plan={upgradePayload?.meta?.plan || normalizedPlan}
-        limit={upgradePayload?.meta?.limit || planLimit}
-        current={upgradePayload?.meta?.current || ownedWorkspacesCount}
-      />
     </ScrollView>
   );
 };
