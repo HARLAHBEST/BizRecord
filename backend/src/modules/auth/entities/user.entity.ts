@@ -33,13 +33,13 @@ export class User {
   @Column({ default: 'pro' })
   plan: 'basic' | 'pro';
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamp', nullable: true, name: 'trial_start_at' })
   trialStartAt: Date | null;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamp', nullable: true, name: 'trial_ends_at' })
   trialEndsAt: Date | null;
 
-  @Column({ default: 'active' })
+  @Column({ default: 'active', name: 'trial_status' })
   trialStatus: 'active' | 'expired' | 'converted';
 
   @Column({ default: true })
