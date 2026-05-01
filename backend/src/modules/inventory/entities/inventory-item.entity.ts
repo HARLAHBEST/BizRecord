@@ -29,13 +29,13 @@ export class InventoryItem {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   quantity: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  @Column({ type: 'decimal', precision: 10, scale: 2, name: 'costPrice' })
   costPrice: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, name: 'sellingPrice' })
   sellingPrice: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0, name: 'reorderLevel' })
   reorderLevel: number;
 
   @Column({ nullable: true })
@@ -73,9 +73,9 @@ export class InventoryItem {
   @JoinColumn({ name: 'created_by' })
   createdBy: User;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'createdAt' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ name: 'updatedAt' })
   updatedAt: Date;
 }

@@ -4,16 +4,11 @@ export class AddEmailVerificationColumnsToUsers1714571343000 implements Migratio
   name = 'AddEmailVerificationColumnsToUsers1714571343000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "emailVerified" boolean DEFAULT false`);
-    await queryRunner.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "emailVerificationCode" character varying`);
-    await queryRunner.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "emailVerificationExpiresAt" TIMESTAMP`);
-    await queryRunner.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "emailVerificationLastSentAt" TIMESTAMP`);
+    // This migration is superseded by 1710860000000-AddOtpFieldsToUsers.ts
+    // All required columns have already been added in that migration
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`ALTER TABLE "users" DROP COLUMN IF EXISTS "emailVerified"`);
-    await queryRunner.query(`ALTER TABLE "users" DROP COLUMN IF EXISTS "emailVerificationCode"`);
-    await queryRunner.query(`ALTER TABLE "users" DROP COLUMN IF EXISTS "emailVerificationExpiresAt"`);
-    await queryRunner.query(`ALTER TABLE "users" DROP COLUMN IF EXISTS "emailVerificationLastSentAt"`);
+    // No-op
   }
 }

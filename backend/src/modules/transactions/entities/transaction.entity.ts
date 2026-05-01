@@ -23,7 +23,7 @@ export class Transaction {
   })
   type: 'sale' | 'expense' | 'purchase' | 'return' | 'adjustment' | 'debt';
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, name: 'referenceNumber' })
   referenceNumber: string;
 
   @ManyToOne(() => InventoryItem, { nullable: true })
@@ -33,13 +33,13 @@ export class Transaction {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   quantity: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  @Column({ type: 'decimal', precision: 10, scale: 2, name: 'unitPrice' })
   unitPrice: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  @Column({ type: 'decimal', precision: 10, scale: 2, name: 'totalAmount' })
   totalAmount: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0, name: 'discountAmount' })
   discountAmount: number;
 
   @Column({ nullable: true })
@@ -49,25 +49,17 @@ export class Transaction {
     type: 'enum',
     enum: ['cash', 'card', 'bank', 'check', 'credit'],
     default: 'cash',
+    name: 'paymentMethod',
   })
   paymentMethod: 'cash' | 'card' | 'bank' | 'check' | 'credit';
 
-  @Column({ default: 'pending' })
-  status: 'pending' | 'completed' | 'cancelled';
-
-  @Column({ nullable: true })
+  @Column({ nullable: true, name: 'customerName' })
   customerName: string;
 
-  @Column({ nullable: true })
-  phone: string;
-
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamp', nullable: true, name: 'dueDate' })
   dueDate: Date;
 
-  @Column({ nullable: true })
-  notes: string;
-
-  @Column({ nullable: true })
+  @Column({ nullable: true, name: 'receiptUrl' })
   receiptUrl: string;
 
   @Column({ type: 'jsonb', nullable: true })
@@ -99,9 +91,9 @@ export class Transaction {
   @JoinColumn({ name: 'created_by' })
   createdBy: User;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'createdAt' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ name: 'updatedAt' })
   updatedAt: Date;
 }

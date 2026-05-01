@@ -17,7 +17,7 @@ export class WorkspaceInvite {
   @Column({ type: 'varchar' })
   email: string;
 
-  @Column({ type: 'uuid', nullable: true })
+  @Column({ type: 'uuid', nullable: true, name: 'userId' })
   userId: string | null;
 
   @ManyToOne(() => Workspace)
@@ -55,6 +55,6 @@ export class WorkspaceInvite {
   @Column({ name: 'accepted_at', type: 'timestamp', nullable: true })
   acceptedAt: Date | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'createdAt' })
   createdAt: Date;
 }

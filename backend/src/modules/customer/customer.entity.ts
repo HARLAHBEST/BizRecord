@@ -38,9 +38,9 @@ export class Customer {
   @Column({ name: 'branch_id', type: 'uuid', nullable: true })
   branchId: string | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'createdAt' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ name: 'updatedAt' })
   updatedAt: Date;
 }

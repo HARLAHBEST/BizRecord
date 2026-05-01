@@ -33,36 +33,36 @@ export class Payment {
   @Column({ default: 'NGN' })
   currency!: string;
 
-  @Column({ default: 'plan_upgrade' })
+  @Column({ name: 'purchase_type', default: 'plan_upgrade' })
   purchaseType!: 'plan_upgrade' | 'addon_purchase' | 'one_time';
 
-  @Column({ default: 'monthly' })
+  @Column({ default: 'monthly', name: 'billing_cycle' })
   billingCycle!: 'monthly' | 'yearly';
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ type: 'varchar', nullable: true, name: 'target_plan' })
   targetPlan!: 'basic' | 'pro' | null;
 
-  @Column({ default: 0 })
+  @Column({ default: 0, name: 'addon_workspace_slots' })
   addonWorkspaceSlots!: number;
 
-  @Column({ default: 0 })
+  @Column({ default: 0, name: 'addon_staff_seats' })
   addonStaffSeats!: number;
 
-  @Column({ default: 0 })
+  @Column({ default: 0, name: 'addon_whatsapp_bundles' })
   addonWhatsappBundles!: number;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ type: 'varchar', nullable: true, name: 'paystack_transaction_id' })
   paystackTransactionId!: string | null;
 
   @Column({ type: 'jsonb', nullable: true })
   metadata!: Record<string, unknown> | null;
 
-  @Column({ type: 'jsonb', nullable: true })
+  @Column({ type: 'jsonb', nullable: true, name: 'raw_response' })
   rawResponse!: Record<string, unknown> | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
 }
