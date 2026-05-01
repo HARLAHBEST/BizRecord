@@ -68,7 +68,7 @@ export class Transaction {
   @Column({ nullable: true })
   notes: string;
 
-  @Column({ nullable: true, name: 'receiptUrl' })
+  @Column({ nullable: true, name: 'receipt_url' })
   receiptUrl: string;
 
   @Column({ type: 'jsonb', nullable: true })
