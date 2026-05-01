@@ -53,11 +53,20 @@ export class Transaction {
   })
   paymentMethod: 'cash' | 'card' | 'bank' | 'check' | 'credit';
 
+  @Column({ default: 'pending' })
+  status: 'pending' | 'completed' | 'cancelled';
+
   @Column({ nullable: true, name: 'customerName' })
   customerName: string;
 
+  @Column({ nullable: true })
+  phone: string;
+
   @Column({ type: 'timestamp', nullable: true, name: 'dueDate' })
   dueDate: Date;
+
+  @Column({ nullable: true })
+  notes: string;
 
   @Column({ nullable: true, name: 'receiptUrl' })
   receiptUrl: string;
