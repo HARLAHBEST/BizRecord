@@ -161,7 +161,7 @@ const SettingsScreen = function({ navigation }) {
               </Text>
             </View>
           </View>
-            <TouchableOpacity onPress={() => navigation.navigate('UserSettings')}>
+            <TouchableOpacity onPress={() => setShowWorkspaceModal(true)}>
             <MaterialIcons name="swap-horiz" size={24} color={theme.colors.primary} />
           </TouchableOpacity>
         </View>
@@ -417,23 +417,6 @@ const SettingsScreen = function({ navigation }) {
           </View>
         </View>
       </Modal>
-
-      <View style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}>
-        <View style={[styles.settingItem, { borderBottomWidth: 0 }]}>
-          <View style={styles.settingInfo}>
-            <MaterialIcons name="payments" size={24} color={theme.colors.primary} />
-            <View style={styles.settingText}>
-              <Text style={[styles.settingTitle, { color: theme.colors.textPrimary }]}>Subscription & Billing</Text>
-              <Text style={[styles.settingDescription, { color: theme.colors.textSecondary }]}>
-                Manage plan, add-ons and usage
-              </Text>
-            </View>
-          </View>
-          <TouchableOpacity onPress={() => navigation.navigate('Subscription')}>
-            <MaterialIcons name="chevron-right" size={24} color={theme.colors.textSecondary} />
-          </TouchableOpacity>
-        </View>
-      </View>
 
       <View style={[styles.settingsCard, { backgroundColor: theme.colors.card, width: contentWidth }]}>
         <TouchableOpacity style={styles.logoutButton} onPress={logout}>
